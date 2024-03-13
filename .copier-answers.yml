@@ -1,0 +1,22 @@
+# Changes here will be overwritten by Copier
+_commit: v2.0.1
+_src_path: gh:lincc-frameworks/python-project-template
+author_email: mjuric@astro.washington.edu
+author_name: Mario Juric
+create_example_module: true
+custom_install: true
+enforce_style: []
+failure_notification: []
+include_benchmarks: true
+include_docs: true
+include_notebooks: true
+mypy_type_checking: none
+package_name: mpsky
+project_license: BSD
+project_name: mpsky
+project_organization: mjuric
+python_versions:
+- '3.9'
+- '3.10'
+- '3.11'
+- '3.12'
