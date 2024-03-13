@@ -16,7 +16,17 @@ classifiers = [
 dynamic = ["version"]
 requires-python = ">=3.9"
 dependencies = [
+    "pytables",
+    "tqdm",
+    "pyarrow",
+    "healpy",
+    "pydantic-settings",
+    "astropy",
+    "pandas"
 ]
+
+[project.scripts]
+mpsky = "mpsky:main"
 
 [project.urls]
 "Source Code" = "https://github.com/mjuric/mpsky"
