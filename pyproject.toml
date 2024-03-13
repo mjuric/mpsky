@@ -16,13 +16,16 @@ classifiers = [
 dynamic = ["version"]
 requires-python = ">=3.9"
 dependencies = [
-    "pytables",
+    "tables",
     "tqdm",
     "pyarrow",
     "healpy",
     "pydantic-settings",
     "astropy",
-    "pandas"
+    "pandas",
+    "requests",
+    "uvicorn",
+    "fastapi"
 ]
 
 [project.scripts]
