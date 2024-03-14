@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi.responses import JSONResponse
 from logging import info, error
 import time
 from . import core as ac
@@ -38,7 +38,7 @@ async def add_process_time_header(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def validation_exception_handler(request, exc):
-    return PlainTextResponse(str(exc), status_code=400)
+    return JSONResponse(status_code=400, content={"message": str(exc)})
 
 @app.get("/")
 async def read_root():

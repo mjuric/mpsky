@@ -10,6 +10,7 @@ import pyarrow as pa
 import requests
 import time
 import sys
+import os
 
 # because astropy is slow AF
 def haversine(lon1, lat1, lon2, lat2):
@@ -332,17 +333,13 @@ def query_service(url, t, ra, dec, radius):
     # Sending a GET request to the endpoint
     try:
         response = requests.get(url, params=params)
+        response.raise_for_status()
     except requests.exceptions.ConnectionError as e:
         print("failed to connect to the remote ephemerides service. details:", file=sys.stderr)
         print(e, file=sys.stderr)
         exit(-1)
 
-    # Check if the request was successful
-    if response.status_code == 200:
-        # Deserialie the response
-        return ipc_read(response.content)
-    else:
-        print("Failed to query /ephemerides/ service. Status code:", response.status_code)
+    return ipc_read(response.content)
 
 def cmd_serve(args):
     # This will be read by the Settings in the service
@@ -363,9 +360,13 @@ def cmd_query(args):
     if args.source.startswith("http://") or args.source.startswith("https://"):
         # remote service query
         assert not args.no_index, "Only valid for local queries"
-        t0 = time.perf_counter()
-        name, ra, dec, p, op = query_service(args.source, args.t, args.ra, args.dec, args.radius)
-        duration = time.perf_counter() - t0
+        try:
+            t0 = time.perf_counter()
+            name, ra, dec, p, op = query_service(args.source, args.t, args.ra, args.dec, args.radius)
+            duration = time.perf_counter() - t0
+        except requests.exceptions.HTTPError as e:
+            print(f"Error (status={e.response.status_code}): {e.response.text}", file=sys.stderr)
+            return -1
     else:
         # local file query
         with open(args.source, "rb") as fp:
@@ -390,6 +391,7 @@ def cmd_query(args):
         assert np.all(dist <= args.radius)
         print(f"# objects: {len(name)}")
         print(f"# compute time: {duration*1000:.2f}msec")
+        print(f"# source: {args.source}")
     else:
         assert False, f"uh, oh, this should not happen. Format {args.format=} is unrecognized."
 
@@ -424,7 +426,7 @@ def main():
     parser_query.add_argument('--radius', type=float, default=1, help='Search radius (degrees)')
     parser_query.add_argument('--no-index', action='store_true', default=False, help='Do not use the healpix index.')
     parser_query.add_argument('--format', type=str, choices=['table', 'json'], default='table', help='Output format.')
-    url = 'http://localhost:8000/ephemerides/'
+    url = os.getenv("MPSKY_URL", 'https://sky.dirac.dev/ephemerides/')
     parser_query.add_argument('--source', type=str, nargs='?', const=url, default=url, help=f'Local ephemerides cache file or service endpoint URL.')
 
     # Parse the arguments
@@ -432,11 +434,11 @@ def main():
 
     # Check which command is being requested and call the appropriate function/handler
     if args.command == 'build':
-        cmd_build(args)
+        return cmd_build(args)
     elif args.command == 'query':
-        cmd_query(args)
+        return cmd_query(args)
     elif args.command == 'serve':
-        cmd_serve(args)
+        return cmd_serve(args)
 
 if __name__ == '__main__':
     main()
