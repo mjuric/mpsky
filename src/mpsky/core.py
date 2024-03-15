@@ -225,12 +225,41 @@ def merge_comps(compslist):
     comps = (tmin, tmax), op, p, objects
     return comps, idx
 
+class JaggedArray:
+    def __init__(self, vals, offs):
+        self.vals = vals
+        self.offs = offs
+        self.n = len(self.offs) - 1
+
+    def __getitem__(self, i):
+        return self.vals[self.offs[i]:self.offs[i+1]]
+
+    def __len__(self):
+        return self.n
+
+    @staticmethod
+    def from_dict(idx):
+        # construct offset array
+        nvals = sum(map(len, idx.values()))
+        vals = np.empty(nvals, int)
+        offs = np.empty(len(idx)+1, int)
+        a = 0
+        for i, v in enumerate(idx.values()):
+            offs[i] = a
+            b = a + len(v)
+            vals[a:b] = v
+            a = b
+        offs[-1] = a
+        return JaggedArray(vals, offs)
+
 def write_comps(fp, comps, idx):
     pickle.dump(comps, fp, protocol=pickle.HIGHEST_PROTOCOL)
     pickle.dump(idx, fp, protocol=pickle.HIGHEST_PROTOCOL)
 
 def read_comps(fp):
-    return (pickle.load(fp), pickle.load(fp))
+    comps, idx = pickle.load(fp), pickle.load(fp)
+    idx = JaggedArray.from_dict(idx)
+    return comps, idx
 
 def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
     df = pd.read_hdf(fn)
