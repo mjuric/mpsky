@@ -11,6 +11,7 @@ import requests
 import time
 import sys
 import os
+import struct
 
 # because astropy is slow AF
 def haversine(lon1, lat1, lon2, lat2):
@@ -252,13 +253,126 @@ class JaggedArray:
         offs[-1] = a
         return JaggedArray(vals, offs)
 
-def write_comps(fp, comps, idx):
-    pickle.dump(comps, fp, protocol=pickle.HIGHEST_PROTOCOL)
-    pickle.dump(idx, fp, protocol=pickle.HIGHEST_PROTOCOL)
+ALIGN_BYTES = 64
 
-def read_comps(fp):
-    comps, idx = pickle.load(fp), pickle.load(fp)
-    idx = JaggedArray.from_dict(idx)
+def write_numpy(fp, a):
+    # allow lists of arrays: concatenate them efficiently
+    # on write-out
+    at = 0
+
+    concat = isinstance(a, list) or isinstance(a, tuple)
+    if not concat: a = [ a ]
+
+    # write dtype
+    b = a[0].dtype.str.encode("ascii")
+    b = struct.pack('<q', len(b)) + b
+    at += fp.write(b)
+
+    # write shape (prefixed by shape length)
+    shape = a[0].shape if not concat else (len(a),) + a[0].shape
+    at += fp.write(np.array((len(shape),) + shape).data)
+
+    # pad to alignment
+    at += fp.write(b'0'*(ALIGN_BYTES - (at % ALIGN_BYTES)))
+    assert at % ALIGN_BYTES == 0, at
+
+    # write array contents
+    for arr in a:
+        at += fp.write(arr.data)
+
+    # pad to alignment
+    at += fp.write(b'0'*(ALIGN_BYTES - (at % ALIGN_BYTES)))
+    assert at % ALIGN_BYTES == 0, at
+    
+    return at
+
+def read_numpy(fp, mode='r', mmap=True):
+    # read dtype
+    l = struct.unpack('<q', fp.read(8))[0]
+    dtype = np.dtype(fp.read(l).decode("ascii"))
+    
+    # read shape
+    l = struct.unpack('<q', fp.read(8))[0]
+    shape = tuple(np.frombuffer(fp.read(l*8), dtype=int))
+
+    # consume padding
+    l = ALIGN_BYTES - (fp.tell() % ALIGN_BYTES)
+    fp.read(l)
+
+    if mmap:
+        # memorymap the data
+        offset = fp.tell()
+        arr = np.memmap(fp, dtype=dtype, mode=mode, shape=shape, offset=offset)
+
+        # seek beyond the array data + padding
+        at = offset + arr.nbytes
+        fp.seek(at + ALIGN_BYTES - (at % ALIGN_BYTES))
+    else:
+        nbytes = np.prod(shape) * dtype.itemsize
+        arr = np.frombuffer(fp.read(nbytes), dtype=dtype).reshape(shape)
+
+        at = fp.tell()
+        fp.seek(at + ALIGN_BYTES - (at % ALIGN_BYTES))
+
+    return arr
+
+def fake_multinight(comps, idx, n=5):
+    # While hacking multi-night support...
+    (tmin, tmax), op, p, objects = comps
+    tminmax = np.array([ (tmin + i, tmax + i) for i in range(n) ])
+    op      = np.tile(op, (n, 1, 1))
+    p       = np.tile(p, (n, 1, 1, 1))
+    objects = np.tile(objects, (n, 1))
+
+    idx = [ JaggedArray(idx.vals, idx.offs) for _ in range(n) ]
+
+    return (tminmax, op, p, objects), idx
+
+#def write_comps(fp, comps, idx):
+#    pickle.dump(comps, fp, protocol=pickle.HIGHEST_PROTOCOL)
+#    pickle.dump(idx, fp, protocol=pickle.HIGHEST_PROTOCOL)
+#
+#def read_comps(fp):
+#    comps, idx = pickle.load(fp), pickle.load(fp)
+#    idx = JaggedArray.from_dict(idx)
+##    comps, idx = fake_multinight(comps, idx)
+##    with open('today.mpsky.bin', 'wb') as fp:
+##        write_comps_ng(fp, comps, idx)
+#    return comps, idx
+
+def write_comps(fp, comps, idx):
+    tminmax, op, p, objects = comps
+
+    at = 0
+    at += write_numpy(fp, np.asarray(tminmax))
+    at += write_numpy(fp, op)
+    at += write_numpy(fp, p)
+    at += write_numpy(fp, objects)
+
+    if isinstance(idx, JaggedArray):
+        vals, offs = idx.vals, idx.offs
+    else:
+        vals = [ i.vals for i in idx ]
+        offs = [ i.offs for i in idx ]
+    at += write_numpy(fp, vals)
+    at += write_numpy(fp, offs)
+
+    return at
+
+def read_comps(fp, mmap=True):
+    tminmax = read_numpy(fp)
+    op = read_numpy(fp)
+    p = read_numpy(fp, mmap=mmap)
+    objects = read_numpy(fp, mmap=mmap)
+    comps = tminmax, op, p, objects
+
+    vals = read_numpy(fp, mmap=mmap)
+    offs = read_numpy(fp, mmap=mmap)
+    if vals.ndim == 1:
+        idx = JaggedArray(vals, offs)
+    else:
+        idx = [ JaggedArray(v, o) for v, o in zip(vals, offs) ]
+
     return comps, idx
 
 def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
@@ -317,7 +431,28 @@ def cmd_build(args):
 
     print("Success!")
 
+def find_comp(comps, idx, t):
+    if not isinstance(idx, list):
+        tmin, tmax = tminmax = comps[0]
+        if tmin <= t and t <= tmax:
+            return comps, idx
+    else:
+        tminmax, op, p, objects = comps
+        i = np.searchsorted(tminmax[:, 0], t)
+        if 0 < i and i < len(tminmax):
+            i -= 1
+            tmin, tmax = tminmax[i]
+            if t <= tmax:
+                return (tminmax[i], op[i], p[i], objects[i]), idx[i]
+
+    raise Exception(f"t={t} not in available ranges ({tminmax})")
+
+
 def query(comps, idx, t, ra, dec, radius, use_index=True):
+    # find the right night
+    comps, idx = find_comp(comps, idx, t)
+
+    # compute pointing vector
     radius = np.radians(radius)
     ra_rad, dec_rad = np.radians(ra), np.radians(dec)
     pointing = np.asarray([ np.cos(dec_rad) * np.cos(ra_rad), np.cos(dec_rad) * np.sin(ra_rad), np.sin(dec_rad) ])
@@ -440,7 +575,7 @@ def main():
     # Create the parser for the "serve" command
     # Shorthand for running `uvicorn service:app --reload --log-config=log_conf.yaml`
     parser_serve = subparsers.add_parser('serve', help='Serve data via an HTTP interface', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser_serve.add_argument('cache_path', type=str, nargs='?', default="today.mpsky.pkl", help='Cache file to read from')
+    parser_serve.add_argument('cache_path', type=str, nargs='?', default="today.mpsky.bin", help='Cache file to read from')
     parser_serve.add_argument('--host', type=str, default="127.0.0.1", help='Hostname or IP to bind to.')
     parser_serve.add_argument('--port', type=int, default=8000, help='Port to bind to.')
     parser_serve.add_argument('--reload', action='store_true', default=False, help='Automatically reload.')

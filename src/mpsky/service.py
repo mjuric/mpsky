@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings
 import sys, asyncio
 
 class Settings(BaseSettings):
-    cache_path: str = "today.mpsky.pkl"
+    cache_path: str = "today.mpsky.bin"
 
 settings = Settings()
 
