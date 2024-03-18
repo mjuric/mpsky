@@ -8,43 +8,46 @@
 [![Read The Docs](https://img.shields.io/readthedocs/mpsky)](https://mpsky.readthedocs.io/)
 [![Benchmarks](https://img.shields.io/github/actions/workflow/status/mjuric/mpsky/asv-main.yml?label=benchmarks)](https://mjuric.github.io/mpsky/)
 
-This project was automatically generated using the LINCC-Frameworks 
-[python-project-template](https://github.com/lincc-frameworks/python-project-template).
+## Quick start
 
-A repository badge was added to show that this project uses the python-project-template, however it's up to
-you whether or not you'd like to display it!
+It's easiest to install this package from PyPI:
 
-For more information about the project template see the 
-[documentation](https://lincc-ppt.readthedocs.io/en/latest/).
+   pip install mpsky
 
-## Dev Guide - Getting Started
+and then use it to query for minor planets present in a field of view using:
 
-Before installing any dependencies or writing code, it's a great idea to create a
-virtual environment. LINCC-Frameworks engineers primarily use `conda` to manage virtual
-environments. If you have conda installed locally, you can run the following to
-create and activate a new environment.
+   mpsky query <mjd> <ra_deg> <dec_deg> --radius=<radius_deg>
 
-```
->> conda create env -n <env_name> python=3.10
->> conda activate <env_name>
-```
+, for example:
 
-Once you have created a new environment, you can install this project for local
-development using the following commands:
+   mpsky query 60853.1 32 11 --radius=1.8
 
-```
->> pip install -e .'[dev]'
->> pre-commit install
->> conda install pandoc
-```
+. This will query the ephemerides from the default server (currently https://sky.dirac.dev).
 
-Notes:
-1. The single quotes around `'[dev]'` may not be required for your operating system.
-2. `pre-commit install` will initialize pre-commit for this local repository, so
-   that a set of tests will be run prior to completing a local commit. For more
-   information, see the Python Project Template documentation on 
-   [pre-commit](https://lincc-ppt.readthedocs.io/en/latest/practices/precommit.html)
-3. Install `pandoc` allows you to verify that automatic rendering of Jupyter notebooks
-   into documentation for ReadTheDocs works as expected. For more information, see
-   the Python Project Template documentation on
-   [Sphinx and Python Notebooks](https://lincc-ppt.readthedocs.io/en/latest/practices/sphinx.html#python-notebooks)
+## Building your own ephemerides cache and running an API service
+
+This all assumes the code is run on UW's epyc machine (it's TBD to generalize these instructions; in the meantime, we hope you can figure it out yourself).
+
+To build the ephemerides cache, run something like:
+
+    mpsky build /astro/store/epyc3/data3/jake_dp03/for_mario/mpcorb_eph_*.hdf -j 24 --output today.mpsky.pkl
+
+where the .hdf files are outputs of Sorcha for a single night.
+
+To query it directly from the resulting file, run:
+
+   mpsky query --source today.mpsky.bin 60853.1 32 11 --radius=1.8
+
+To serve the cache via a HTTP endpoint:
+
+   mpsky serve --verbose
+
+this will bind to localhost:8000 by default.
+
+To query from the HTTP endpoint:
+
+   mpsky query 60853.1 32 11 --radius=1.8 --host localhost --port 8000
+
+## How to develop
+
+TBD.
