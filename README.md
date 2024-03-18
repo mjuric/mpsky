@@ -4,9 +4,10 @@ Quickly find the minor planets present in a certain field of view at a certain t
 
 [![PyPI](https://img.shields.io/pypi/v/mpsky?color=blue&logo=pypi&logoColor=white)](https://pypi.org/project/mpsky/)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/mjuric/mpsky/smoke-test.yml)](https://github.com/mjuric/mpsky/actions/workflows/smoke-test.yml)
-[![Codecov](https://codecov.io/gh/mjuric/mpsky/branch/main/graph/badge.svg)](https://codecov.io/gh/mjuric/mpsky)
-[![Read The Docs](https://img.shields.io/readthedocs/mpsky)](https://mpsky.readthedocs.io/)
 [![Benchmarks](https://img.shields.io/github/actions/workflow/status/mjuric/mpsky/asv-main.yml?label=benchmarks)](https://mjuric.github.io/mpsky/)
+
+<!-- [![Codecov](https://codecov.io/gh/mjuric/mpsky/branch/main/graph/badge.svg)](https://codecov.io/gh/mjuric/mpsky)
+[![Read The Docs](https://img.shields.io/readthedocs/mpsky)](https://mpsky.readthedocs.io/) -->
 
 ## Quick start
 
