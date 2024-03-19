@@ -31,7 +31,7 @@ This all assumes the code is run on UW's epyc machine (it's TBD to generalize th
 
 To build the ephemerides cache, run something like:
 ```
-mpsky build /astro/store/epyc3/data3/jake_dp03/for_mario/mpcorb_eph_*.hdf -j 24 --output today.mpsky.pkl
+mpsky build /astro/store/epyc3/data3/jake_dp03/for_mario/mpcorb_eph_*.hdf -j 24 --output today.mpsky.bin
 ```
 where the .hdf files are outputs of Sorcha for a single night.
 
@@ -47,7 +47,7 @@ this will bind to localhost:8000 by default.
 
 To query from the HTTP endpoint:
 ```
-mpsky query 60853.1 32 11 --radius=1.8 --host localhost --port 8000
+mpsky query 60853.1 32 11 --radius=1.8 --source http://localhost:8000/ephemerides
 ```
 
 ## How to develop
