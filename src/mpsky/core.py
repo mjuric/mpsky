@@ -112,14 +112,14 @@ def build_healpix_index(comps, nside, dt_minutes=5):
 
 def compress(df, cheby_order = 4, observer_cheby_order = 7):
     # make sure the input is sorted by ObjID and time.
-    df = df.sort_values(["ObjID", "FieldMJD_TAI"])
+    df = df.sort_values(["ObjID", "fieldMJD_TAI"])
     objects = df["ObjID"].unique()
     nobj = len(objects)
     nobs = len(df) // len(objects)
     assert len(df) % nobj == 0, "All objects must have been observed at the same times"
 
     # extract times
-    t = df["FieldMJD_TAI"].values[0:nobs]
+    t = df["fieldMJD_TAI"].values[0:nobs]
     tmin, tmax = t.min(), t.max()
     t -= tmin
     assert np.all(np.round(t) == 0), "Hmmm... the adjusted times should span [0, 1) day range"
@@ -128,9 +128,9 @@ def compress(df, cheby_order = 4, observer_cheby_order = 7):
     # extract & compress the topocentric observer vector
     #
     oxyz = np.empty((nobs, 3))
-    oxyz[:, 0] = (df["Obs-Sun(J2000x)(km)"].values * u.km).to(u.au).value[0:nobs]
-    oxyz[:, 1] = (df["Obs-Sun(J2000y)(km)"].values * u.km).to(u.au).value[0:nobs]
-    oxyz[:, 2] = (df["Obs-Sun(J2000z)(km)"].values * u.km).to(u.au).value[0:nobs]
+    oxyz[:, 0] = (df["Obs_Sun_x_LTC_km"].values * u.km).to(u.au).value[0:nobs]
+    oxyz[:, 1] = (df["Obs_Sun_y_LTC_km"].values * u.km).to(u.au).value[0:nobs]
+    oxyz[:, 2] = (df["Obs_Sun_z_LTC_km"].values * u.km).to(u.au).value[0:nobs]
     op = np.polynomial.chebyshev.chebfit(t, oxyz, observer_cheby_order)
 
     # Check that the decompressed topocentric position makes sense
@@ -141,9 +141,9 @@ def compress(df, cheby_order = 4, observer_cheby_order = 7):
     # Fit asteroid chebys
     #
     axyz = np.empty((nobs, 3, nobj))
-    axyz[:, 0, :].T.flat = (df["Ast-Sun(J2000x)(km)"].values * u.km).to(u.au).value
-    axyz[:, 1, :].T.flat = (df["Ast-Sun(J2000y)(km)"].values * u.km).to(u.au).value
-    axyz[:, 2, :].T.flat = (df["Ast-Sun(J2000z)(km)"].values * u.km).to(u.au).value
+    axyz[:, 0, :].T.flat = (df["Obj_Sun_x_LTC_km"].values * u.km).to(u.au).value
+    axyz[:, 1, :].T.flat = (df["Obj_Sun_y_LTC_km"].values * u.km).to(u.au).value
+    axyz[:, 2, :].T.flat = (df["Obj_Sun_z_LTC_km"].values * u.km).to(u.au).value
     p = np.polynomial.chebyshev.chebfit(t, axyz.reshape(nobs, -1), cheby_order).reshape(cheby_order+1, 3, -1)
 
     # Check that the decompressed asteroid positions make sense
@@ -380,7 +380,7 @@ def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
 
     # Extract a dataframe only for the specific night,
     # or (if night hasn't been given) verify the input only has a single night
-    nights = utc_to_night(df["FieldMJD_TAI"].values)
+    nights = utc_to_night(df["fieldMJD_TAI"].values)
     assert np.all(nights == nights[0]), "All inputs must come from the same night"
 
     comps = compress(df)
@@ -388,8 +388,8 @@ def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
 
     if verify:
         # extract visit times for this night
-        df2 = df.sort_values(["ObjID", "FieldMJD_TAI"])
-        t = df2["FieldMJD_TAI"].values[ df2["ObjID"] == df2["ObjID"].iloc[0] ]
+        df2 = df.sort_values(["ObjID", "fieldMJD_TAI"])
+        t = df2["fieldMJD_TAI"].values[ df2["ObjID"] == df2["ObjID"].iloc[0] ]
         ra  = df2['AstRA(deg)'].values
         dec = df2['AstDec(deg)'].values
         objects, _, (ra2, dec2) = decompress(t, comps, return_ephem=True)
