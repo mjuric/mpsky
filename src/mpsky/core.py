@@ -122,15 +122,16 @@ def compress(df, cheby_order = 4, observer_cheby_order = 7):
     t = df["fieldMJD_TAI"].values[0:nobs]
     tmin, tmax = t.min(), t.max()
     t -= tmin
-    assert np.all(np.round(t) == 0), "Hmmm... the adjusted times should span [0, 1) day range"
+#    assert np.all(np.round(t) == 0), f"Hmmm... the adjusted times should span [0, 1) day range {(tmin, tmax)=}"
+    assert np.all(t < 1.), f"Hmmm... the adjusted times should span [0, 1) day range {(tmin, tmax)=}"
 
     #
     # extract & compress the topocentric observer vector
     #
     oxyz = np.empty((nobs, 3))
-    oxyz[:, 0] = (df["Obs_Sun_x_LTC_km"].values * u.km).to(u.au).value[0:nobs]
-    oxyz[:, 1] = (df["Obs_Sun_y_LTC_km"].values * u.km).to(u.au).value[0:nobs]
-    oxyz[:, 2] = (df["Obs_Sun_z_LTC_km"].values * u.km).to(u.au).value[0:nobs]
+    oxyz[:, 0] = (df["Obs_Sun_x_km"].values * u.km).to(u.au).value[0:nobs]
+    oxyz[:, 1] = (df["Obs_Sun_y_km"].values * u.km).to(u.au).value[0:nobs]
+    oxyz[:, 2] = (df["Obs_Sun_z_km"].values * u.km).to(u.au).value[0:nobs]
     op = np.polynomial.chebyshev.chebfit(t, oxyz, observer_cheby_order)
 
     # Check that the decompressed topocentric position makes sense
@@ -148,8 +149,8 @@ def compress(df, cheby_order = 4, observer_cheby_order = 7):
 
     # Check that the decompressed asteroid positions make sense
     axyz2 = np.polynomial.chebyshev.chebval(t, p)
-    ra  = df['AstRA(deg)'].values
-    dec = df['AstDec(deg)'].values
+    ra  = df['RA_deg'].values
+    dec = df['Dec_deg'].values
 
     xyz = axyz2 - oxyz2[:, np.newaxis, :] # --> (xyz, objid, nobs)
     x, y, z = xyz
@@ -349,6 +350,9 @@ def write_comps(fp, comps, idx):
     at += write_numpy(fp, p)
     at += write_numpy(fp, objects)
 
+    if isinstance(idx, dict):
+        idx = JaggedArray.from_dict(idx)
+
     if isinstance(idx, JaggedArray):
         vals, offs = idx.vals, idx.offs
     else:
@@ -390,8 +394,8 @@ def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
         # extract visit times for this night
         df2 = df.sort_values(["ObjID", "fieldMJD_TAI"])
         t = df2["fieldMJD_TAI"].values[ df2["ObjID"] == df2["ObjID"].iloc[0] ]
-        ra  = df2['AstRA(deg)'].values
-        dec = df2['AstDec(deg)'].values
+        ra  = df2['RA_deg'].values
+        dec = df2['Dec_deg'].values
         objects, _, (ra2, dec2) = decompress(t, comps, return_ephem=True)
         ra2, dec2 = ra2.flatten(), dec2.flatten()
         dd = haversine(ra2, dec2, ra, dec)*3600
