@@ -1,10 +1,11 @@
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException, Query
 from fastapi.responses import JSONResponse
 from logging import info, error
 import time
 from . import core as ac
 from pydantic_settings import BaseSettings
 import sys, asyncio
+from typing import Literal
 
 class Settings(BaseSettings):
     cache_path: str = "today.mpsky.bin"
@@ -27,7 +28,7 @@ async def lifespan(app: FastAPI):
 
     info("Ephemerides server stopping.")
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, root_path="/api/v1")
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -50,7 +51,7 @@ import pyarrow as pa
 import io
 
 @app.get("/ephemerides/")
-async def read_ephemerides(t: float, ra: float, dec: float, radius: float):
+async def read_ephemerides(t: float, ra: float, dec: float, radius: float, format: Literal["ipc", "json", "pickle", "base64"] = Query("json")):
     # performance
     import time
     t0 = time.perf_counter()
@@ -61,20 +62,24 @@ async def read_ephemerides(t: float, ra: float, dec: float, radius: float):
 
     info(f"# objects: {len(name)}, compute time: {duration*1000:.2f}msec")
 
-    ret = ac.ipc_write(name, ra, dec, op, p)
-    ac.ipc_read(ret)
-    return Response(content=ret, media_type='application/octet-stream')
-
-    ret = pickle.dumps(
-      {"name": name, "ra": ra, "dec": dec, 'ast_cheby': p, 'topo_cheby': op}
-    )
-    return Response(content=ret, media_type='application/octet-stream')
-
-    ret = b64encode(
-    pickle.dumps(
-      {"t": name, "ra": ra, "dec": dec, 'ast_cheby': p, 'topo_cheby': op}
-    )
-    )
-    return ret
-
-    return {"t": name.tolist(), "ra": ra.tolist(), "dec": dec.tolist()}#, 'ast_cheby': p.tolist(), 'topo_cheby': op.tolist()}
+    if format == "ipc":
+        ret = ac.ipc_write(name, ra, dec, op, p)
+        ac.ipc_read(ret)
+        return Response(content=ret, media_type='application/octet-stream')
+    elif format == "pickle":
+        ret = pickle.dumps(
+          {"name": name, "ra": ra, "dec": dec, 'ast_cheby': p, 'topo_cheby': op}
+        )
+        return Response(content=ret, media_type='application/octet-stream')
+    elif format == "base64":
+        ret = b64encode(
+        pickle.dumps(
+          {"t": name, "ra": ra, "dec": dec, 'ast_cheby': p, 'topo_cheby': op}
+        )
+        )
+        return ret
+    elif format == "json":
+        ##return {"t": name.tolist(), "ra": ra.tolist(), "dec": dec.tolist()}#, 'ast_cheby': p.tolist(), 'topo_cheby': op.tolist()}
+        return [ {'name': name1, 'ra': ra1, 'dec': dec1 } for (name1, ra1, dec1) in zip(name.tolist(), ra.tolist(), dec.tolist()) ]
+    else:
+        assert False, f"Unknown {format=}, this shouldn't have happened..."
