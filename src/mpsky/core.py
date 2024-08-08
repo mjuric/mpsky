@@ -48,10 +48,20 @@ def ipc_read(msg):
 
     return r["name"].to_numpy(zero_copy_only=False), r["ra"].to_numpy(), r["dec"].to_numpy(), p.to_numpy(), op.to_numpy()
 
+from astroquery.mpc import MPC
+
 def utc_to_night(mjd, obscode='X05'):
-    assert obscode == 'X05'
-    localtime = mjd - 4./24.  ## hack to convert UTC to ~approx local time for Chile (need to do this better...)
-    night = (localtime - 0.5).astype(int)
+    # find the local meridian
+    location_info = MPC.get_observatory_location(obscode)
+    longitude = location_info[0].degree
+    if longitude > 180:
+        dhours = -(360 - longitude) / 15.
+    else:
+        dhours = longitude / 15.
+    ## print(f"{dhours=}") # this is the difference between UTC and local time at obs, in hours
+
+    localtime = mjd + dhours/24.  ## convert UTC to local time at the observatory
+    night = np.asarray(localtime - 0.5).astype(int)
     return night
 
 def build_healpix_index(comps, nside, dt_minutes=5):
@@ -379,12 +389,15 @@ def read_comps(fp, mmap=True):
 
     return comps, idx
 
-def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
-    df = pd.read_hdf(fn)
+def _aux_compress(fn, obscode, nside=128, verify=True, tolerance_arcsec=1):
+    if fn.lower().endswith(".hdf5") or fn.lower().endswith(".h5"):
+        df = pd.read_hdf(fn)
+    elif fn.lower().endswith(".csv"):
+        df = pd.read_csv(fn)
 
     # Extract a dataframe only for the specific night,
     # or (if night hasn't been given) verify the input only has a single night
-    nights = utc_to_night(df["fieldMJD_TAI"].values)
+    nights = utc_to_night(df["fieldMJD_TAI"].values, obscode)
     assert np.all(nights == nights[0]), "All inputs must come from the same night"
 
     comps = compress(df)
@@ -403,12 +416,12 @@ def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
 
     return comps, idx
 
-def fit_many(fns, ncores):
+def fit_many(fns, ncores, obscode):
     from tqdm import tqdm
     from functools import partial
     from multiprocessing import Pool
     with Pool(processes=ncores) as pool:
-        all_comps_and_idx = list(tqdm(pool.imap(_aux_compress, fns), total=len(fns)))
+        all_comps_and_idx = list(tqdm(pool.imap(partial(_aux_compress, obscode=obscode), fns), total=len(fns)))
 
     return merge_comps(all_comps_and_idx)
 
@@ -418,8 +431,9 @@ def cmd_build(args):
     outfn = args.output # f'cache.mjd={night0}.pkl'
     fns = args.ephem_file # '/astro/store/epyc3/data3/jake_dp03/for_mario/mpcorb_eph_*.hdf')
     ncores = args.j
+    obscode = args.obscode
 
-    comps, idx = fit_many(fns, ncores=ncores)
+    comps, idx = fit_many(fns, ncores=ncores, obscode=obscode)
 
     with open(outfn, "wb") as fp:
         write_comps(fp, comps, idx)
@@ -572,7 +586,8 @@ def main():
 
     # Create the parser for the "compress" command
     parser_build = subparsers.add_parser('build', help='Compress ephemerides files.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser_build.add_argument('ephem_file', type=str, nargs='+', help='T')
+    parser_build.add_argument('obscode', type=str, help='Observatory code')
+    parser_build.add_argument('ephem_file', type=str, nargs='+', help='HDF5 Sorcha-computed ephemerides for the obscode')
     parser_build.add_argument('-j', type=int, default=1, help='Run multithreaded')
     parser_build.add_argument('--output', type=str, required=True, help='Output file name.')
 
