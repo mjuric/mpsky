@@ -48,8 +48,8 @@ def ipc_read(msg):
 
     return r["name"].to_numpy(zero_copy_only=False), r["ra"].to_numpy(), r["dec"].to_numpy(), p.to_numpy(), op.to_numpy()
 
-def utc_to_night(mjd, obscode='X03'):
-    assert obscode == 'X03'
+def utc_to_night(mjd, obscode='X05'):
+    assert obscode == 'X05'
     localtime = mjd - 4./24.  ## hack to convert UTC to ~approx local time for Chile (need to do this better...)
     night = (localtime - 0.5).astype(int)
     return night
