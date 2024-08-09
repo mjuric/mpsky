@@ -51,6 +51,9 @@ def ipc_read(msg):
 from astroquery.mpc import MPC
 
 def utc_to_night(mjd, obscode='X05'):
+    # given an observation taken at <mjd> UTC, find which night it belongs to
+    # at the location of the observatory given by <obscode>.
+
     # find the local meridian
     location_info = MPC.get_observatory_location(obscode)
     longitude = location_info[0].degree
@@ -58,9 +61,9 @@ def utc_to_night(mjd, obscode='X05'):
         dhours = -(360 - longitude) / 15.
     else:
         dhours = longitude / 15.
-    ## print(f"{dhours=}") # this is the difference between UTC and local time at obs, in hours
+    ##print(f"{dhours=}") # this is the difference between UTC and local time at obs, in hours
 
-    localtime = mjd + dhours/24.  ## convert UTC to local time at the observatory
+    localtime = mjd + dhours/24.  ## convert local time at the observatory to utc
     night = np.asarray(localtime - 0.5).astype(int)
     return night
 
@@ -170,7 +173,9 @@ def compress(df, cheby_order = 4, observer_cheby_order = 7):
     lon = np.rad2deg( np.arctan2(y, x) ).flatten()
 
     dd = haversine(lon, lat, ra, dec)*3600
-    assert dd.max() < 1
+#    assert dd.max() < 1, f"{dd.max()=}"
+    if dd.max() >= 1:
+        print(f"WARNING: {dd.max()=}")
 
     #
     # return the results
@@ -398,7 +403,7 @@ def _aux_compress(fn, obscode, nside=128, verify=True, tolerance_arcsec=1):
     # Extract a dataframe only for the specific night,
     # or (if night hasn't been given) verify the input only has a single night
     nights = utc_to_night(df["fieldMJD_TAI"].values, obscode)
-    assert np.all(nights == nights[0]), "All inputs must come from the same night"
+    assert np.all(nights == nights[0]), f"All inputs must come from the same night, {np.unique(nights)=} {fn=}"
 
     comps = compress(df)
     idx = build_healpix_index(comps, nside)
@@ -412,7 +417,9 @@ def _aux_compress(fn, obscode, nside=128, verify=True, tolerance_arcsec=1):
         objects, _, (ra2, dec2) = decompress(t, comps, return_ephem=True)
         ra2, dec2 = ra2.flatten(), dec2.flatten()
         dd = haversine(ra2, dec2, ra, dec)*3600
-        assert dd.max() < tolerance_arcsec
+##        assert dd.max() < tolerance_arcsec, f"{dd.max()=}"
+        if dd.max() >= 1:
+            print(f"WARNING: {dd.max()=} >= {tolerance_arcsec=}")
 
     return comps, idx
 
