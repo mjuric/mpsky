@@ -178,16 +178,7 @@ def compress(df, cheby_order = 7, observer_cheby_order = 7):
     lon = np.rad2deg( np.arctan2(y, x) ).flatten()
 
     dd = haversine(lon, lat, ra, dec)*3600
-<<<<<<< HEAD
-<<<<<<< HEAD
-    if dd.max() >= 2.:
-        print('max error:', dd.max())
-=======
-    print('max error:', dd.max())
->>>>>>> b6fd967 (pass tmin, tmax)
-=======
     print('error 50, 90, 99, 99.9, 100:', np.percentile(dd, (50, 90, 99, 99.9, 100)))
->>>>>>> c5fb707 (Jake's slight changes)
     #assert dd.max() < 2
 
     #
@@ -428,8 +419,7 @@ def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
         objects, _, (ra2, dec2) = decompress(t, comps, return_ephem=True)
         ra2, dec2 = ra2.flatten(), dec2.flatten()
         dd = haversine(ra2, dec2, ra, dec)*3600
-        if dd.max() >= tolerance_arcsec:
-            print('max error', dd.max())
+        print('max error', dd.max())
         #assert dd.max() < tolerance_arcsec
 
     return comps, idx
