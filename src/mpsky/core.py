@@ -159,8 +159,12 @@ def compress(df, cheby_order = 3, observer_cheby_order = 7):
     lon = np.rad2deg( np.arctan2(y, x) ).flatten()
 
     dd = haversine(lon, lat, ra, dec)*3600
+<<<<<<< HEAD
     if dd.max() >= 2.:
         print('max error:', dd.max())
+=======
+    print('max error:', dd.max())
+>>>>>>> b6fd967 (pass tmin, tmax)
     #assert dd.max() < 2
 
     #
