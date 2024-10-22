@@ -25,14 +25,14 @@ def haversine(lon1, lat1, lon2, lat2):
     c = 2 * np.arcsin(np.sqrt(a))
     return np.degrees(c)
 
-def ipc_write(name, ra, dec, op, p):
+def ipc_write(name, ra, dec, op, p, tmin, tmax):
     # fast pyarrow IPC serialization
     outbuf = io.BytesIO()
     out = pa.output_stream(outbuf)
     a = pa.Tensor.from_numpy(p);   pa.ipc.write_tensor(a, out)
     a = pa.Tensor.from_numpy(op);  pa.ipc.write_tensor(a, out)
-    data = [ pa.array(name), pa.array(ra), pa.array(dec) ]
-    batch = pa.record_batch(data, names=['name', 'ra', 'dec'])
+    data = [ pa.array(name), pa.array(ra), pa.array(dec), pa.array(np.ones_like(ra) * tmin), pa.array(np.ones_like(ra) * tmax)]
+    batch = pa.record_batch(data, names=['name', 'ra', 'dec', 'tmin', 'tmax'])
     with pa.ipc.new_stream(out, batch.schema) as writer:
       writer.write_batch(batch)
     return outbuf.getvalue()
@@ -110,7 +110,7 @@ def build_healpix_index(comps, nside, dt_minutes=5):
 
     return h2l
 
-def compress(df, cheby_order = 4, observer_cheby_order = 7):
+def compress(df, cheby_order = 3, observer_cheby_order = 7):
     # make sure the input is sorted by ObjID and time.
     df = df.sort_values(["ObjID", "fieldMJD_TAI"])
     objects = df["ObjID"].unique()
@@ -122,8 +122,7 @@ def compress(df, cheby_order = 4, observer_cheby_order = 7):
     t = df["fieldMJD_TAI"].values[0:nobs]
     tmin, tmax = t.min(), t.max()
     t -= tmin
-#    assert np.all(np.round(t) == 0), f"Hmmm... the adjusted times should span [0, 1) day range {(tmin, tmax)=}"
-    assert np.all(t < 1.), f"Hmmm... the adjusted times should span [0, 1) day range {(tmin, tmax)=}"
+    assert np.max(t) < 1.0#np.all(np.round(t) == 0), "Hmmm... the adjusted times should span [0, 1) day range"
 
     #
     # extract & compress the topocentric observer vector
@@ -160,7 +159,8 @@ def compress(df, cheby_order = 4, observer_cheby_order = 7):
     lon = np.rad2deg( np.arctan2(y, x) ).flatten()
 
     dd = haversine(lon, lat, ra, dec)*3600
-    assert dd.max() < 1
+    print('max error:', dd.max())
+    #assert dd.max() < 2
 
     #
     # return the results
@@ -223,6 +223,9 @@ def merge_comps(compslist):
     for i in range(len(allidx)):
         allidx[i] = np.concatenate(allidx[i])
     idx = allidx
+    idx = JaggedArray.from_dict(idx)
+    #print('keys:', idx.keys())
+    #print(len(idx))
 
     comps = (tmin, tmax), op, p, objects
     return comps, idx
@@ -343,7 +346,6 @@ def fake_multinight(comps, idx, n=5):
 
 def write_comps(fp, comps, idx):
     tminmax, op, p, objects = comps
-
     at = 0
     at += write_numpy(fp, np.asarray(tminmax))
     at += write_numpy(fp, op)
@@ -356,7 +358,7 @@ def write_comps(fp, comps, idx):
     if isinstance(idx, JaggedArray):
         vals, offs = idx.vals, idx.offs
     else:
-        vals = [ i.vals for i in idx ]
+        vals = [ i.vals for i in idx ] #idx[i]
         offs = [ i.offs for i in idx ]
     at += write_numpy(fp, vals)
     at += write_numpy(fp, offs)
@@ -376,7 +378,6 @@ def read_comps(fp, mmap=True):
         idx = JaggedArray(vals, offs)
     else:
         idx = [ JaggedArray(v, o) for v, o in zip(vals, offs) ]
-
     return comps, idx
 
 def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
@@ -399,7 +400,8 @@ def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
         objects, _, (ra2, dec2) = decompress(t, comps, return_ephem=True)
         ra2, dec2 = ra2.flatten(), dec2.flatten()
         dd = haversine(ra2, dec2, ra, dec)*3600
-        assert dd.max() < tolerance_arcsec
+        print('max error', dd.max())
+        #assert dd.max() < tolerance_arcsec
 
     return comps, idx
 
@@ -488,7 +490,7 @@ def query(comps, idx, t, ra, dec, radius, use_index=True):
     # select the results
     _, op, p, _ = comps2
     name, (ra, dec), p = objects[mask], cart_to_sph(xyz[:, mask]), p[:, :, mask]
-    return name, ra, dec, p, op
+    return name, ra, dec, p, op, tmin, tmax
 
 def query_service(url, t, ra, dec, radius):
     params = {

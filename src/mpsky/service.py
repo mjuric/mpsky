@@ -55,13 +55,13 @@ async def read_ephemerides(t: float, ra: float, dec: float, radius: float):
     import time
     t0 = time.perf_counter()
 
-    name, ra, dec, p, op = ac.query(comps, idx, t, ra, dec, radius)
+    name, ra, dec, p, op, tmin, tmax = ac.query(comps, idx, t, ra, dec, radius)
 
     duration = time.perf_counter() - t0
 
     info(f"# objects: {len(name)}, compute time: {duration*1000:.2f}msec")
 
-    ret = ac.ipc_write(name, ra, dec, op, p)
+    ret = ac.ipc_write(name, ra, dec, op, p, tmin, tmax)
     ac.ipc_read(ret)
     return Response(content=ret, media_type='application/octet-stream')
 
