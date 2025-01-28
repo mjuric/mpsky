@@ -26,7 +26,7 @@ ORDERED_KERNEL_FILES = [
     EARTH_HIGH_PRECISION,
 ]
 
-basepath = "/Users/mjuric/Library/Caches/sorcha"
+basepath = "/Users/jake/Library/Caches/sorcha"
 
 JPL_PLANETS = "linux_p1550p2650.440"
 JPL_SMALL_BODIES = "sb441-n16.bsp"
@@ -93,7 +93,7 @@ def create_sim(ephem, xv):
     sim.t = epoch - ephem.jd_ref
     sim.dt = 10
     # This turns off the iterative timestep introduced in arXiv:2401.02849 and default since rebound 4.0.3
-    sim.ri_ias15.adaptive_mode = 1
+    sim.ri_ias15.min_dt = 1e-10
     # Add the particle to the simulation
     sim.add(ic)
 
