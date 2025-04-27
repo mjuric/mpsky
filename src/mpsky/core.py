@@ -48,8 +48,8 @@ def ipc_read(msg):
 
     return r["name"].to_numpy(zero_copy_only=False), r["ra"].to_numpy(), r["dec"].to_numpy(), p.to_numpy(), op.to_numpy()
 
-def utc_to_night(mjd, obscode='X03'):
-    assert obscode == 'X03'
+def utc_to_night(mjd, obscode='X05'):
+    assert obscode == 'X05'
     localtime = mjd - 4./24.  ## hack to convert UTC to ~approx local time for Chile (need to do this better...)
     night = (localtime - 0.5).astype(int)
     return night
@@ -159,7 +159,8 @@ def compress(df, cheby_order = 3, observer_cheby_order = 7):
     lon = np.rad2deg( np.arctan2(y, x) ).flatten()
 
     dd = haversine(lon, lat, ra, dec)*3600
-    print('max error:', dd.max())
+    if dd.max() >= 2.:
+        print('max error:', dd.max())
     #assert dd.max() < 2
 
     #
@@ -386,7 +387,7 @@ def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
     # Extract a dataframe only for the specific night,
     # or (if night hasn't been given) verify the input only has a single night
     nights = utc_to_night(df["fieldMJD_TAI"].values)
-    assert np.all(nights == nights[0]), "All inputs must come from the same night"
+    assert np.all(nights == nights[0]), f"All inputs must come from the same night: {np.unique(nights)}"
 
     comps = compress(df)
     idx = build_healpix_index(comps, nside)
@@ -400,7 +401,8 @@ def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
         objects, _, (ra2, dec2) = decompress(t, comps, return_ephem=True)
         ra2, dec2 = ra2.flatten(), dec2.flatten()
         dd = haversine(ra2, dec2, ra, dec)*3600
-        print('max error', dd.max())
+        if dd.max() >= tolerance_arcsec:
+            print('max error', dd.max())
         #assert dd.max() < tolerance_arcsec
 
     return comps, idx
