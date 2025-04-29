@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+set -euo pipefail
 
 PID=
 CACHEFN=
+CACHEDIR=${CACHEDIR:=/caches}
 
 # make sure we clean up mpsky serve if we're interrupted
 trap 'kill $PID 2>/dev/null; exit' INT
@@ -12,7 +13,7 @@ CACHEURL="https://epyc.astro.washington.edu/~mjuric/mpsky-caches"
 latest_available_cache()
 {
 	local MJD=$1
-	curl -s "$CACHEURL/" | grep -oP 'href="\K[^"]+' | grep -vE '^\.\.?$' | sort | grep -E "eph\\.$MJD\\..*\\.bin"
+	curl -s "$CACHEURL/" | grep -oP 'href="\K[^"]+' | grep -vE '^\.\.?$' | sort -r | grep -E "eph\\.$MJD\\..*\\.bin" | head -n 1
 }
 
 while :
@@ -24,31 +25,34 @@ do
 	OBSDATE=$(TZ="America/Santiago" date --date='12 hours ago' +"%Y/%m/%d")
 	MJD=$(echo "$(date --date="$OBSDATE" +%s) / 86400.0 + 2440587.5 - 2400000.5" | bc -l | cut -f 1 -d .)
 
-	echo $OBSDATE $MJD
-	exit
 
 	# fetch the most recent file for that MJD
 	NEW_CACHEFN=$(latest_available_cache $MJD)
 
+	echo "[$(date)] OBSDATE=$OBSDATE MJD=$MJD NEW_CACHEFN=$NEW_CACHEFN CACHEFN=$CACHEFN"
+
 	# if the file has changed, download and restart the server
 	if [[ "$CACHEFN" != "$NEW_CACHEFN" ]]; then
 		## download the cache file
-		curl "$CACHEURL/$NEW_CACHEFN" -o "/caches/$NEW_CACHEFN" || { continue; }
+		curl -s "$CACHEURL/$NEW_CACHEFN" -o "$CACHEDIR/$NEW_CACHEFN" || { continue; }
+		echo "    downloaded $CACHEDIR/$NEW_CACHEFN"
 
 		## kill current server process
-		[[ ! -z $PID ]] && { kill $PID; wait $PID; }
+		[[ ! -z $PID ]] && { echo "    killing $PID"; { kill $PID && wait $PID; } || continue; }
 
 		## serve the new cache
-		mpsky serve "/caches/$NEW_CACHEFN" &
+#		echo mpsky serve "/caches/$NEW_CACHEFN" &
+		sleep 33 &
 		PID=$!
+		echo "    mpsky serve started, pid=$PID"
 
 		## delete the old cache
-		[[ ! -z "$CACHEFN" ]] && rm -f "/caches/$CACHEFN"
+		[[ ! -z "$CACHEFN" ]] && { echo "    deleting $CACHEDIR/$CACHEFN"; rm -f "$CACHEDIR/$CACHEFN"; }
 		CACHEFN="$NEW_CACHEFN"
 	fi
 
 	# test that the process is alive
-	kill -0 $PID || { echo "error: process $PID not alive; exiting."; exit -1; }
+	kill -0 "$PID" 2>/dev/null || { echo "error: process $PID not alive; exiting."; exit -1; }
 done
 
 #mpsky serve /caches/eph.60792.2025-04-27.bin ${@}
