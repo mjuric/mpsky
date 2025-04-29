@@ -6,11 +6,7 @@ RUN git clone https://github.com/mjuric/mpsky.git
 RUN cd mpsky && python -m pip install -e .
 RUN mpsky --help
 
-# FIXME: temporarily build a cache into the docker container
-# In the future, the entrypoint will fetch the apropriate
-# container from an AWS bucket
-RUN mkdir /caches
-COPY caches/* /caches/
+RUN apt-get update && apt-get install -y bc curl && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Usual entrypoint. Best to run with
 # docker run -it --rm --tmpfs /tmp:size=100m -p 8000:8000 --read-only mpsky-daily --host 0.0.0.0 --verbose
@@ -19,4 +15,4 @@ ENTRYPOINT ["/entrypoint.sh"]
 
 # switch to non-privileged user
 USER ubuntu
-RUN mpsky --help
+ENV MPLCONFIGDIR=/tmp

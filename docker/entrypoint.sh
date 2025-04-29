@@ -3,13 +3,13 @@ set -euo pipefail
 
 PID=
 CACHEFN=
-CACHEDIR=${CACHEDIR:=/caches}
+CACHEDIR=${CACHEDIR:=/tmp}
+CACHEURL=${CACHEURL:="https://epyc.astro.washington.edu/~mjuric/mpsky-caches"}
 
 # make sure we clean up mpsky serve if we're interrupted
-trap 'kill $PID 2>/dev/null; exit' INT
+trap 'echo "cleaning up [pid=$PID]"; kill $PID 2>/dev/null; exit' INT
 
 # fetch the latest cache file for a given MJD
-CACHEURL="https://epyc.astro.washington.edu/~mjuric/mpsky-caches"
 latest_available_cache()
 {
 	local MJD=$1
@@ -34,15 +34,15 @@ do
 	# if the file has changed, download and restart the server
 	if [[ "$CACHEFN" != "$NEW_CACHEFN" ]]; then
 		## download the cache file
-		curl -s "$CACHEURL/$NEW_CACHEFN" -o "$CACHEDIR/$NEW_CACHEFN" || { continue; }
+		echo "    downloading $CACHEURL/$NEW_CACHEFN"
+		curl -sS "$CACHEURL/$NEW_CACHEFN" -o "$CACHEDIR/$NEW_CACHEFN" || { continue; }
 		echo "    downloaded $CACHEDIR/$NEW_CACHEFN"
 
 		## kill current server process
 		[[ ! -z $PID ]] && { echo "    killing $PID"; { kill $PID && wait $PID; } || continue; }
 
 		## serve the new cache
-#		echo mpsky serve "/caches/$NEW_CACHEFN" &
-		sleep 33 &
+		mpsky serve "$CACHEDIR/$NEW_CACHEFN" ${@} &
 		PID=$!
 		echo "    mpsky serve started, pid=$PID"
 
