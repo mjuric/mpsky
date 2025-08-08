@@ -8,13 +8,13 @@ CACHEURL=${CACHEURL:="https://epyc.astro.washington.edu/~mjuric/mpsky-data/cache
 CHECK_INTERVAL=${CHECK_INTERVAL:=120}
 
 # make sure we clean up mpsky serve if we're interrupted
-trap 'echo "cleaning up [pid=$PID]"; kill $PID 2>/dev/null; exit' INT
+trap 'echo "[$(date)] cleaning up [pid=$PID]"; kill $PID 2>/dev/null; exit' INT
 
 # fetch the latest cache file for a given MJD
 latest_available_cache()
 {
 	local MJD=$1
-	curl -s "$CACHEURL/" | grep -oP 'href="\K[^"]+' | grep -vE '^\.\.?$' | sort -r | grep -E "eph\\.$MJD\\..*\\.bin" | head -n 1
+	{ curl -s "$CACHEURL/" | grep -oP 'href="\K[^"]+' | grep -vE '^\.\.?$' | sort -r | grep -E "eph\\.$MJD\\..*\\.bin" | head -n 1; } || true
 }
 
 while :
@@ -29,6 +29,10 @@ do
 
 	# fetch the most recent file for that MJD
 	NEW_CACHEFN=$(latest_available_cache $MJD)
+	if [[ -z "$NEW_CACHEFN" ]]; then
+		echo "[$(date)] No cache available for tonight (MJD=$MJD). Exiting.";
+		exit -1;
+	fi
 
 	echo "[$(date)] OBSDATE=$OBSDATE MJD=$MJD NEW_CACHEFN=$NEW_CACHEFN CACHEFN=$CACHEFN"
 
@@ -54,7 +58,7 @@ do
 	fi
 
 	# test that the process is alive
-	kill -0 "$PID" 2>/dev/null || { echo "error: process $PID not alive; exiting."; exit -1; }
+	kill -0 "$PID" 2>/dev/null || { echo "[$(date)] error: process $PID not alive; exiting."; exit -1; }
 done
 
 #mpsky serve /caches/eph.60792.2025-04-27.bin ${@}
