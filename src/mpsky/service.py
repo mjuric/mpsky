@@ -33,7 +33,13 @@ app = FastAPI(lifespan=lifespan)
 async def add_process_time_header(request: Request, call_next):
     start_time = time.perf_counter()
     response = await call_next(request)
-    info("Time took to process the request and return response is {:.2f} msec".format((time.perf_counter() - start_time)*1000))
+    if request.url.path != "/":
+        full_request = (
+            f"{request.method} {request.url.path}"
+            f"{'?' + request.url.query if request.url.query else ''} "
+            f"HTTP/{request.scope.get('http_version', '1.1')}"
+        )
+        info("Processing time {:.2f} msec [{}]".format((time.perf_counter() - start_time)*1000, full_request))
     return response
 
 @app.exception_handler(Exception)
