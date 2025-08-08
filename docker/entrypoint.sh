@@ -4,7 +4,8 @@ set -euo pipefail
 PID=
 CACHEFN=
 CACHEDIR=${CACHEDIR:=/tmp}
-CACHEURL=${CACHEURL:="https://epyc.astro.washington.edu/~mjuric/mpsky-caches"}
+CACHEURL=${CACHEURL:="https://epyc.astro.washington.edu/~mjuric/mpsky-data/caches"}
+CHECK_INTERVAL=${CHECK_INTERVAL:=120}
 
 # make sure we clean up mpsky serve if we're interrupted
 trap 'echo "cleaning up [pid=$PID]"; kill $PID 2>/dev/null; exit' INT
@@ -19,7 +20,7 @@ latest_available_cache()
 while :
 do
 	# wait until we check for newer files, unless we're here for the first time
-	[[ -z $PID ]] || sleep 10;
+	[[ -z $PID ]] || sleep $CHECK_INTERVAL;
 
 	# Compute the MJD of the current (local time) observing night in La Serena
 	OBSDATE=$(TZ="America/Santiago" date --date='12 hours ago' +"%Y/%m/%d")
@@ -39,9 +40,10 @@ do
 		echo "    downloaded $CACHEDIR/$NEW_CACHEFN"
 
 		## kill current server process
-		[[ ! -z $PID ]] && { echo "    killing $PID"; { kill $PID && wait $PID; } || continue; }
+		[[ -n $PID ]] && { echo "    killing $PID"; kill "$PID" && wait "$PID" 2>/dev/null || true; }
 
 		## serve the new cache
+		echo "    starting mpsky..."
 		mpsky serve "$CACHEDIR/$NEW_CACHEFN" ${@} &
 		PID=$!
 		echo "    mpsky serve started, pid=$PID"
