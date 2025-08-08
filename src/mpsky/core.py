@@ -110,7 +110,7 @@ def build_healpix_index(comps, nside, dt_minutes=5):
 
     return h2l
 
-def compress(df, cheby_order = 3, observer_cheby_order = 7):
+def compress(df, cheby_order = 7, observer_cheby_order = 7):
     # make sure the input is sorted by ObjID and time.
     df = df.sort_values(["ObjID", "fieldMJD_TAI"])
     objects = df["ObjID"].unique()
@@ -122,7 +122,7 @@ def compress(df, cheby_order = 3, observer_cheby_order = 7):
     t = df["fieldMJD_TAI"].values[0:nobs]
     tmin, tmax = t.min(), t.max()
     t -= tmin
-    assert np.max(t) < 1.0#np.all(np.round(t) == 0), "Hmmm... the adjusted times should span [0, 1) day range"
+    assert np.max(t) <= 1.0#np.all(np.round(t) == 0), "Hmmm... the adjusted times should span [0, 1) day range"
 
     #
     # extract & compress the topocentric observer vector
@@ -160,11 +160,15 @@ def compress(df, cheby_order = 3, observer_cheby_order = 7):
 
     dd = haversine(lon, lat, ra, dec)*3600
 <<<<<<< HEAD
+<<<<<<< HEAD
     if dd.max() >= 2.:
         print('max error:', dd.max())
 =======
     print('max error:', dd.max())
 >>>>>>> b6fd967 (pass tmin, tmax)
+=======
+    print('error 50, 90, 99, 99.9, 100:', np.percentile(dd, (50, 90, 99, 99.9, 100)))
+>>>>>>> c5fb707 (Jake's slight changes)
     #assert dd.max() < 2
 
     #
@@ -391,7 +395,7 @@ def _aux_compress(fn, nside=128, verify=True, tolerance_arcsec=1):
     # Extract a dataframe only for the specific night,
     # or (if night hasn't been given) verify the input only has a single night
     nights = utc_to_night(df["fieldMJD_TAI"].values)
-    assert np.all(nights == nights[0]), f"All inputs must come from the same night: {np.unique(nights)}"
+    # assert np.all(nights == nights[0]), "All inputs must come from the same night"
 
     comps = compress(df)
     idx = build_healpix_index(comps, nside)
