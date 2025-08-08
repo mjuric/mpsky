@@ -25,14 +25,26 @@ def haversine(lon1, lat1, lon2, lat2):
     c = 2 * np.arcsin(np.sqrt(a))
     return np.degrees(c)
 
-def ipc_write(name, ra, dec, op, p, tmin, tmax):
+ELEMENTS_LIST   = "q e inc node argPeri t_p_MJD_TDB epochMJD_TDB".split()
+ELEMENTS_FORMAT = " ".join([ "{:> 11f}" ] * len(ELEMENTS_LIST))
+HEADER_FORMAT = "{:>11s} {:>11s} {:>11s} {:>11s} {:>11s} {:>13s}  {:>12s}"
+
+def ipc_write(name, ra, dec, op, p, tmin, tmax, elements):
     # fast pyarrow IPC serialization
     outbuf = io.BytesIO()
     out = pa.output_stream(outbuf)
     a = pa.Tensor.from_numpy(p);   pa.ipc.write_tensor(a, out)
     a = pa.Tensor.from_numpy(op);  pa.ipc.write_tensor(a, out)
     data = [ pa.array(name), pa.array(ra), pa.array(dec), pa.array(np.ones_like(ra) * tmin), pa.array(np.ones_like(ra) * tmax)]
-    batch = pa.record_batch(data, names=['name', 'ra', 'dec', 'tmin', 'tmax'])
+    names = ['name', 'ra', 'dec', 'tmin', 'tmax']
+
+    # add the columns from elements, if passed
+    if elements is not None:
+        for col in ELEMENTS_LIST:
+            data.append(pa.array(elements[col].values))
+            names.append(col)
+
+    batch = pa.record_batch(data, names=names)
     with pa.ipc.new_stream(out, batch.schema) as writer:
       writer.write_batch(batch)
     return outbuf.getvalue()
@@ -46,7 +58,14 @@ def ipc_read(msg):
             schema = reader.schema
             r = next(reader)
 
-    return r["name"].to_numpy(zero_copy_only=False), r["ra"].to_numpy(), r["dec"].to_numpy(), p.to_numpy(), op.to_numpy()
+    # construct an elements pandas dataframe
+    if "q" in schema.names:
+        cols = { col: r[col].to_numpy() for col in ELEMENTS_LIST }
+        elements = pd.DataFrame(cols)
+    else:
+        elements = None
+
+    return r["name"].to_numpy(zero_copy_only=False), r["ra"].to_numpy(), r["dec"].to_numpy(), p.to_numpy(), op.to_numpy(), elements
 
 def utc_to_night(mjd, obscode='X05'):
     assert obscode == 'X05'
@@ -464,7 +483,7 @@ def find_comp(comps, idx, t):
     raise Exception(f"t={t} not in available ranges ({tminmax})")
 
 
-def query(comps, idx, t, ra, dec, radius, use_index=True):
+def query(comps, idx, t, ra, dec, radius, catalog):
     # find the right night
     comps, idx = find_comp(comps, idx, t)
 
@@ -500,14 +519,22 @@ def query(comps, idx, t, ra, dec, radius, use_index=True):
     # select the results
     _, op, p, _ = comps2
     name, (ra, dec), p = objects[mask], cart_to_sph(xyz[:, mask]), p[:, :, mask]
-    return name, ra, dec, p, op, tmin, tmax
+    
+    # match elements, if requested
+    if catalog is not None:
+        elements = catalog.loc[name]
+    else:
+        elements = None
 
-def query_service(url, t, ra, dec, radius):
+    return name, ra, dec, p, op, tmin, tmax, elements
+
+def query_service(url, t, ra, dec, radius, return_elements):
     params = {
         "t": t,
         "ra": ra,
         "dec": dec,
-        "radius": radius
+        "radius": radius,
+        "return_elements": return_elements
     }
 
     # Sending a GET request to the endpoint
@@ -525,6 +552,7 @@ def cmd_serve(args):
     # This will be read by the Settings in the service
     import os
     os.environ["CACHE_PATH"] = args.cache_path
+    os.environ["CATALOG_PATH"] = args.catalog
 
     if args.verbose:
         import os.path
@@ -542,7 +570,7 @@ def cmd_query(args):
         assert not args.no_index, "Only valid for local queries"
         try:
             t0 = time.perf_counter()
-            name, ra, dec, p, op = query_service(args.source, args.t, args.ra, args.dec, args.radius)
+            name, ra, dec, p, op, elements = query_service(args.source, args.t, args.ra, args.dec, args.radius, args.return_elements)
             duration = time.perf_counter() - t0
         except requests.exceptions.HTTPError as e:
             print(f"Error (status={e.response.status_code}): {e.response.text}", file=sys.stderr)
@@ -555,28 +583,49 @@ def cmd_query(args):
             idx = None
 
         t0 = time.perf_counter()
-        name, ra, dec, p, op = query(comps, idx, args.t, args.ra, args.dec, args.radius)
+        name, ra, dec, p, op, elements = query(comps, idx, args.t, args.ra, args.dec, args.radius, catalog)
         duration = time.perf_counter() - t0
 
     if args.format == "json":
         import json
-        js = json.dumps({'name': name.tolist(), 'ra:': ra.tolist(), 'dec': dec.tolist(), 'ast_cheby': p.tolist(), 'topo_cheby': op.tolist()})
-        print(js)
+#        js = json.dumps({'name': name.tolist(), 'ra:': ra.tolist(), 'dec': dec.tolist(), 'ast_cheby': p.tolist(), 'topo_cheby': op.tolist()})
+#        print(js)
+        cols = dict(name=name, ra=ra, dec=dec)
+        df = pd.DataFrame(cols)
+        if elements is not None:
+            df = pd.concat([df, elements], axis=1)
+        df["ast_cheby"] = [ p[:, :, i].T.tolist() for i in range(p.shape[2]) ]
+        data = {
+            "ast": df.to_dict(orient="records"),
+            "topo_cheby": op.T.tolist()
+        }
+#        data = dict(ast=df, topo_cheby=op.T.tolist())
+#        print(df.to_json(orient="records"))
+        print(json.dumps(data))
     elif args.format == "table":
         # print the results
         dist = haversine(ra, dec, args.ra, args.dec)
-        print("#   object            ra           dec          dist")
-        for n, r, d, dd in zip(name, ra, dec, dist):
-            print(f"{n:10s} {r:13.8f} {d:13.8f} {dd:13.8f}")
+        if elements is None:
+            print("#   object            ra           dec          dist")
+            for n, r, d, dd in zip(name, ra, dec, dist):
+                print(f"{n:10s} {r:13.8f} {d:13.8f} {dd:13.8f}")
+        else:
+            print(("#   object            ra           dec          dist " + HEADER_FORMAT).format(*elements.columns))
+            for values in zip(name, ra, dec, dist, *elements.to_numpy().T):
+                print(("{:10s} {:13.8f} {:13.8f} {:13.8f} " + ELEMENTS_FORMAT).format(*values))
         assert np.all(dist <= args.radius)
         print(f"# objects: {len(name)}")
-        print(f"# compute time: {duration*1000:.2f}msec")
+        print(f"# query time: {duration*1000:.2f}msec")
         print(f"# source: {args.source}")
     else:
         assert False, f"uh, oh, this should not happen. Format {args.format=} is unrecognized."
 
 def main():
     import argparse
+    import signal
+
+    # don't vomit exceptions when a pipe is broken (i.e., when piped to `head`)
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
     # Create the top-level parser
     parser = argparse.ArgumentParser(description='Asteroid Checker.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -597,6 +646,7 @@ def main():
     parser_serve.add_argument('--reload', action='store_true', default=False, help='Automatically reload.')
     parser_serve.add_argument('--log-config', type=str, help='Uvicorn logging configuration file.')
     parser_serve.add_argument('--verbose', action='store_true', default=False, help='Activate verbose logging.')
+    parser_serve.add_argument('--catalog', type=str, default="", help='Catalog file with additional data corresponding to the objects in cache.')
 
     # Create the parser for the "query" command
     parser_query = subparsers.add_parser('query', help='Query data', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -604,6 +654,7 @@ def main():
     parser_query.add_argument('ra', type=float, help='Right ascension (degrees)')
     parser_query.add_argument('dec', type=float, help='Declination (degrees)')
     parser_query.add_argument('--radius', type=float, default=1, help='Search radius (degrees)')
+    parser_query.add_argument('--return-elements', action='store_true', help='Return the orbital elements with the ephemerides')
     parser_query.add_argument('--no-index', action='store_true', default=False, help='Do not use the healpix index.')
     parser_query.add_argument('--format', type=str, choices=['table', 'json'], default='table', help='Output format.')
     url = os.getenv("MPSKY_URL", 'https://sky.dirac.dev/ephemerides/')

@@ -8,6 +8,7 @@ import sys, asyncio
 
 class Settings(BaseSettings):
     cache_path: str = "today.mpsky.bin"
+    catalog_path: str = ""
 
 settings = Settings()
 
@@ -15,13 +16,21 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Load the ML model
-    global comps, idx
+    global comps, idx, catalog
     fn = settings.cache_path
     info(f"Loading ephemerides cache from {fn}.")
     with open(fn, "rb") as fp:
         comps, idx = ac.read_comps(fp)
 
-    info("Cache loaded.")
+    catfn = settings.catalog_path
+    if catfn:
+        info(f"Loading the catalog from {catfn}.")
+        import pandas as pd
+        catalog = pd.read_csv(catfn)
+        catalog.set_index("ObjID", inplace=True)
+        ##print(catalog.iloc[:10])
+
+    info("Files loaded.")
 
     yield
 
@@ -56,18 +65,22 @@ import pyarrow as pa
 import io
 
 @app.get("/ephemerides/")
-async def read_ephemerides(t: float, ra: float, dec: float, radius: float):
+async def read_ephemerides(t: float, ra: float, dec: float, radius: float, return_elements: bool = False):
     # performance
     import time
     t0 = time.perf_counter()
 
-    name, ra, dec, p, op, tmin, tmax = ac.query(comps, idx, t, ra, dec, radius)
+    pass_catalog = catalog if return_elements else None
+    name, ra, dec, p, op, tmin, tmax, elements = ac.query(comps, idx, t, ra, dec, radius, pass_catalog)
 
     duration = time.perf_counter() - t0
 
     info(f"# objects: {len(name)}, compute time: {duration*1000:.2f}msec")
 
-    ret = ac.ipc_write(name, ra, dec, op, p, tmin, tmax)
+    if elements is not None:
+        info(f"# elements: {len(elements)}")
+
+    ret = ac.ipc_write(name, ra, dec, op, p, tmin, tmax, elements)
     ac.ipc_read(ret)
     return Response(content=ret, media_type='application/octet-stream')
 
