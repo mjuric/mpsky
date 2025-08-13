@@ -65,7 +65,10 @@ def ipc_read(msg):
     else:
         elements = None
 
-    return r["name"].to_numpy(zero_copy_only=False), r["ra"].to_numpy(), r["dec"].to_numpy(), p.to_numpy(), op.to_numpy(), elements
+    return (
+        r["name"].to_numpy(zero_copy_only=False), r["ra"].to_numpy(), r["dec"].to_numpy(), 
+        p.to_numpy(), op.to_numpy(), r["tmin"].to_numpy(), r["tmax"].to_numpy(), elements
+    )
 
 def utc_to_night(mjd, obscode='X05'):
     assert obscode == 'X05'
