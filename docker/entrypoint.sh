@@ -5,6 +5,7 @@ PID=
 CACHEFN=
 CACHEDIR=${CACHEDIR:=/tmp}
 CACHEURL=${CACHEURL:="https://epyc.astro.washington.edu/~mjuric/mpsky-data/caches"}
+CATALOGURL=${CATALOGURL:="https://epyc.astro.washington.edu/~mjuric/mpsky-data/catalogs"}
 CHECK_INTERVAL=${CHECK_INTERVAL:=120}
 
 # make sure we clean up mpsky serve if we're interrupted
@@ -40,20 +41,27 @@ do
 	if [[ "$CACHEFN" != "$NEW_CACHEFN" ]]; then
 		## download the cache file
 		echo "    downloading $CACHEURL/$NEW_CACHEFN"
-		curl -sS "$CACHEURL/$NEW_CACHEFN" -o "$CACHEDIR/$NEW_CACHEFN" || { continue; }
+		curl --progress-bar -sS "$CACHEURL/$NEW_CACHEFN" -o "$CACHEDIR/$NEW_CACHEFN" || { continue; }
 		echo "    downloaded $CACHEDIR/$NEW_CACHEFN"
+
+		## compute the catalog filename and download it
+		CATALOGFN=${NEW_CACHEFN/#eph.$MJD/mpcorb-orbits}
+		CATALOGFN=${CATALOGFN/%.bin/.csv}
+		echo "    downloading $CATALOGURL/$CATALOGFN"
+		curl --progress-bar -sS "$CATALOGURL/$CATALOGFN" -o "$CACHEDIR/$CATALOGFN" || { continue; }
+		echo "    downloaded $CACHEDIR/$CATALOGFN"
 
 		## kill current server process
 		[[ -n $PID ]] && { echo "    killing $PID"; kill "$PID" && wait "$PID" 2>/dev/null || true; }
 
 		## serve the new cache
 		echo "    starting mpsky..."
-		mpsky serve "$CACHEDIR/$NEW_CACHEFN" ${@} &
+		mpsky serve "$CACHEDIR/$NEW_CACHEFN" --catalog "$CACHEDIR/$CATALOGFN" ${@} &
 		PID=$!
 		echo "    mpsky serve started, pid=$PID"
 
 		## delete the old cache
-		[[ ! -z "$CACHEFN" ]] && { echo "    deleting $CACHEDIR/$CACHEFN"; rm -f "$CACHEDIR/$CACHEFN"; }
+		[[ ! -z "$CACHEFN" ]] && { echo "    deleting $CACHEDIR/$CACHEFN"; rm -f "$CACHEDIR/$CACHEFN" "$CACHEDIR/$CATALOGFN"; }
 		CACHEFN="$NEW_CACHEFN"
 	fi
 
