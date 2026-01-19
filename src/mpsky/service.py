@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import JSONResponse
-from logging import info, error, warning
+from logging import info, error, warning, debug
 import time
 from . import core as ac
 from pydantic_settings import BaseSettings
@@ -51,10 +51,15 @@ def load_cache(fn, catfn):
     if len(caches) > settings.max_loaded_nights:
         k, v = caches.popitem(last=False) # evict least-recent
         info(f"Evicting night={k} from in-memory cache.")
-        del k
-        del v
-        import gc
-        gc.collect()
+
+        # Monitor that we truly are releasing memory...
+        import weakref, gc
+        w = weakref.ref(v[0][0][3]) # comps.objects
+        del k, v
+
+        if w() is not None:
+            warning(f"hmm... cache evicted from dict but Python-level object not free()-d.")
+
     info(f"In-memory cached nights: {tuple(caches.keys())}")
 
     import resource
