@@ -115,7 +115,7 @@ def get_datastore_cache_url(night):
         avail_caches = defaultdict(list)
         base_url = cache_datastore + '/caches'
         pat = re.compile(rf"^eph\.[0-9]+\..*\.bin$")
-        html = requests.get(base_url).text
+        html = requests.get(base_url + "/").text
         soup = BeautifulSoup(html, "html.parser")
         cachefn = [ a["href"] for a in soup.find_all("a", href=True) if pat.match(a["href"]) ]
         if len(cachefn) == 0:
@@ -159,9 +159,27 @@ def list_to_intervals(vals):
 
     return f"{out}"
 
-def get_cache(night):
+async def _download_to(url: str, dest: str) -> None:
+    """ Downloads a URL to file using aiohttp
     """
-    Get the files for a given night. This function is safe to call frequently.
+    dir = os.path.dirname(dest) or "."
+    fn = os.path.basename(dest)
+    tmp = os.path.join(dir, f"tmp.{fn}")
+
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as r:
+            r.raise_for_status()
+            with open(tmp, "wb") as f:
+                async for chunk in r.content.iter_chunked(1 << 20):
+                    f.write(chunk)
+
+    os.replace(tmp, dest)  # atomic rename on POSIX
+
+cache_download_lock = asyncio.Lock()
+async def get_cache(night):
+    """
+    Get the caches for a given night. This function is safe to call frequently.
     It will return the result from the cache, if available, and download from
     datastore otherwise.
     """
@@ -176,6 +194,23 @@ def get_cache(night):
     if settings.cache_datastore == "":
         return next(caches.values())
 
+    # try fetching from the datastore.
+    # the lock prevents 189 clients all trying to download the same cache file.
+    # FIXME: the lock really should be on a per-file basis; different files can be
+    # loaded in parallel.
+    async with cache_download_lock:
+        # check if someone else downloaded the files while we were waiting
+        # for the lock
+        try:
+            val = caches.pop(night) # remove so we can reinsert as most-recent
+            caches[night] = val
+            return val[0];
+        except KeyError:
+            pass
+
+        return await _do_get_cache(night)
+
+async def _do_get_cache(night):
     # retrieve from data store
     cache_url, catalog_url = get_datastore_cache_url(night)
     if cache_url is None:
@@ -194,25 +229,18 @@ def get_cache(night):
     fn, catfn = f"{tmpdir}/downloaded.{fn}", f"{tmpdir}/downloaded.{catfn}" # prefix them with 'downloaded.' so they're easy to find for eviction
 
     # fetch the files, caching them locally; skip if they're already fetched
-    # NOTE: this download is intentionally not async, for now. That ensures that
-    # we don't get 189 threads all trying to download the same cache at once.
-    # There are (of course) ways to work around this, but I don't have time to do
-    # it r.n. and we don't really need it for the use case.
-    import urllib.request
     if not os.path.exists(fn):
         info(f"downloading {cache_url} ...")
-        tmpfn, _ = urllib.request.urlretrieve(cache_url)
-        os.rename(tmpfn, fn)
+        await _download_to(cache_url, fn)
     else:
-        os.utime(fn, None) # touch the file modification time, for cache management
+        os.utime(fn, None)  # touch for cache management
         info(f"{fn} already downloaded.")
 
     if not os.path.exists(catfn):
-        info(f"downloading {catalog_url}")
-        tmpcatfn, _ = urllib.request.urlretrieve(catalog_url)
-        os.rename(tmpcatfn, catfn)
+        info(f"downloading {catalog_url} ...")
+        await _download_to(catalog_url, catfn)
     else:
-        os.utime(catfn, None) # touch the file modification time, for cache management
+        os.utime(catfn, None)  # touch for cache management
         info(f"{catfn} already downloaded.")
 
     # load and cache them
@@ -237,7 +265,6 @@ def get_cache(night):
 
     return val
 
-
 async def rollover_to_new_night():
     """ Ensure the cache for current night is always loaded.
         This is only active when loading with a datastore, rather than
@@ -254,7 +281,7 @@ async def rollover_to_new_night():
         night = ac.utc_to_night(Time.now().mjd)
         if night != current_night:
             info(f"rollover_to_new_night: loading current {night=}")
-            get_cache(night)
+            await get_cache(night)
             current_night = night
 
         await asyncio.sleep(60)
@@ -325,7 +352,7 @@ async def read_ephemerides(t: float, ra: float, dec: float, radius: float, retur
 
     # chose which cache to utilize
     night = ac.utc_to_night(t)
-    comps, idx, catalog = get_cache(night)
+    comps, idx, catalog = await get_cache(night)
 
     pass_catalog = catalog if return_elements != ReturnElements.none else None
     name, ra, dec, p, op, tmin, tmax, elements = ac.query(comps, idx, t, ra, dec, radius, pass_catalog)
