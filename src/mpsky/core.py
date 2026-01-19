@@ -70,7 +70,12 @@ def ipc_read(msg):
 def utc_to_night(mjd, obscode='X05'):
     assert obscode == 'X05'
     localtime = mjd - 4./24.  ## hack to convert UTC to ~approx local time for Chile (need to do this better...)
-    night = (localtime - 0.5).astype(int)
+
+    if isinstance(localtime, np.ndarray):
+        night = (localtime - 0.5).astype(int)
+    else:
+        night = int(localtime - 0.5)
+
     return night
 
 def build_healpix_index(comps, nside, dt_minutes=5):
@@ -544,7 +549,10 @@ def cmd_serve(args):
     # This will be read by the Settings in the service
     import os
     os.environ["CACHE_PATH"] = args.cache_path
+    os.environ["CACHE_DATASTORE"] = args.cache_datastore
     os.environ["CATALOG_PATH"] = args.catalog
+    os.environ["MAX_LOADED_NIGHTS"] = str(args.max_loaded_nights)
+    os.environ["MAX_ONDISK_NIGHTS"] = str(args.max_ondisk_nights)
 
     if args.verbose:
         import os.path
@@ -632,13 +640,16 @@ def main():
     # Create the parser for the "serve" command
     # Shorthand for running `uvicorn service:app --reload --log-config=log_conf.yaml`
     parser_serve = subparsers.add_parser('serve', help='Serve data via an HTTP interface', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser_serve.add_argument('cache_path', type=str, nargs='?', default="today.mpsky.bin", help='Cache file to read from')
+    parser_serve.add_argument('cache_path', type=str, nargs='?', default="", help='Cache file to read from')
     parser_serve.add_argument('--host', type=str, default="127.0.0.1", help='Hostname or IP to bind to.')
     parser_serve.add_argument('--port', type=int, default=8000, help='Port to bind to.')
     parser_serve.add_argument('--reload', action='store_true', default=False, help='Automatically reload.')
     parser_serve.add_argument('--log-config', type=str, help='Uvicorn logging configuration file.')
     parser_serve.add_argument('--verbose', action='store_true', default=False, help='Activate verbose logging.')
     parser_serve.add_argument('--catalog', type=str, default="", help='Catalog file with additional data corresponding to the objects in cache.')
+    parser_serve.add_argument('--cache-datastore', type=str, default="https://epyc.astro.washington.edu/~mjuric/mpsky-data", help='Data store of nightly caches.')
+    parser_serve.add_argument('--max-loaded-nights', type=int, default=7, help='Maximum number of nights to keep serving from memory')
+    parser_serve.add_argument('--max-ondisk-nights', type=int, default=14, help='Maximum number of nights to keep downloaded in the disk cache')
 
     # Create the parser for the "query" command
     parser_query = subparsers.add_parser('query', help='Query data', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
