@@ -51,8 +51,21 @@ def load_cache(fn, catfn):
     if len(caches) > settings.max_loaded_nights:
         k, v = caches.popitem(last=False) # evict least-recent
         info(f"Evicting night={k} from in-memory cache.")
+        del k
+        del v
+        import gc
+        gc.collect()
     info(f"In-memory cached nights: {tuple(caches.keys())}")
-    
+
+    import resource
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    rss_MB = usage.ru_maxrss / 1024
+    import platform
+    if platform.system() == "Darwin":
+        # Darwin returns usage.ru_maxrss in bytes, Linux in kB
+        rss_MB /= 1024
+    info(f"Memory usage: {int(rss_MB):,}MB.")
+
     return val[0]
 
 avail_caches, cache_list_expire_time = None, None
@@ -90,15 +103,36 @@ def get_datastore_cache_url(night):
         cache_list_expire_time = now + timedelta(seconds=60)
 
     # Get the latest cache for the requested night
-    try:
+    if night in avail_caches:
         date = max(avail_caches[night])
-    except KeyError:
-        warning(f"No cache for {night:=} present at {base_url}")
+    else:
+        warning(f"no cache for {night:=} present in {cache_datastore}.")
         return (None, None)
 
     cache_url = f"{cache_datastore}/caches/eph.{night}.{date}.bin"
     catalog_url = f"{cache_datastore}/catalogs/mpcorb-orbits.{date}.csv"
     return (cache_url, catalog_url)
+
+def list_to_intervals(vals):
+    vals = sorted(vals)
+
+    ranges = []
+    start = prev = vals[0]
+
+    for x in vals[1:]:
+        if x == prev + 1:
+            prev = x
+        else:
+            ranges.append((start, prev))
+            start = prev = x
+    ranges.append((start, prev))
+
+    out = ", ".join(
+        f"{a}-{b}" if a != b else f"{a}"
+        for a, b in ranges
+    )
+
+    return f"{out}"
 
 def get_cache(night):
     """
@@ -120,7 +154,7 @@ def get_cache(night):
     # retrieve from data store
     cache_url, catalog_url = get_datastore_cache_url(night)
     if cache_url is None:
-        raise Exception(f"({night:=}) not in available night ranges {tuple(avail_caches.keys())}")
+        raise Exception(f"{night=} not in available in {settings.cache_datastore} (nights available: {list_to_intervals(avail_caches.keys())})")
 
     # compute the local cache directory
     import tempfile
@@ -141,19 +175,17 @@ def get_cache(night):
     # it r.n. and we don't really need it for the use case.
     import urllib.request
     if not os.path.exists(fn):
-        info(f"{fn} <- {cache_url} ...")
+        info(f"downloading {cache_url} ...")
         tmpfn, _ = urllib.request.urlretrieve(cache_url)
         os.rename(tmpfn, fn)
-        info("done")
     else:
         os.utime(fn, None) # touch the file modification time, for cache management
         info(f"{fn} already downloaded.")
 
     if not os.path.exists(catfn):
-        info(f"{catfn} <- {catalog_url}")
+        info(f"downloading {catalog_url}")
         tmpcatfn, _ = urllib.request.urlretrieve(catalog_url)
         os.rename(tmpcatfn, catfn)
-        info(f"done.")
     else:
         os.utime(catfn, None) # touch the file modification time, for cache management
         info(f"{catfn} already downloaded.")
@@ -173,6 +205,10 @@ def get_cache(night):
     MAX_FILE_CACHE = 2 * settings.max_ondisk_nights # Number of files per night, times number of nights to allow on disk
     for fn in files[MAX_FILE_CACHE:]:
         info(f"Deleting {fn} from on-disk cache.")
+        try:
+            os.remove(fn)
+        except OSError as e:
+            error(f"Failed to delete {fn} [{e.message=}]")
 
     return val
 
@@ -182,17 +218,21 @@ async def rollover_to_new_night():
         This is only active when loading with a datastore, rather than
         directly from a single file.
     """
+    current_night = 0
+
     while True:
-        # try to load from datastore for current night
+        # try to load from datastore for current night. Note
+        # that the current night could get evicted fromt the cache
+        # if it's not used frequently; if that happens, this code
+        # won't try to reload it.
         from astropy.time import Time
         night = ac.utc_to_night(Time.now().mjd)
-        if night not in caches:
+        if night != current_night:
             info(f"rollover_to_new_night: loading current {night=}")
             get_cache(night)
-        else:
-            info(f"rollover_to_new_night: {night=} already loaded.")
+            current_night = night
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(60)
 
 from contextlib import asynccontextmanager
 @asynccontextmanager

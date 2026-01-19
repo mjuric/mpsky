@@ -43,3 +43,24 @@ To test that it works, run:
 ```
 mpsky query 60792.8 32 11 --radius=1.8 --source http://localhost:8000/ephemerides
 ```
+
+## RSP Phalanx debugging
+
+To get rsp-dev k8s auth, go to https://k8s.slac.stanford.edu/usdf-rsp-dev
+and execute the commands on USDF. Don't forget to `module load kubectl`.
+
+To get the pod name:
+
+```
+MPSKY_POD=$(kubectl get pod -n mpsky   -l app.kubernetes.io/instance=mpsky,app.kubernetes.io/name=mpsky   -o jsonpath='{.items[0].metadata.name}')
+```
+
+To inspect the resource usage:
+```
+kubectl top pod ${MPSKY_POD} -n mpsky
+```
+
+To get shell:
+```
+kubectl exec -n mpsky -it ${MPSKY_POD} -- /bin/bash
+```
