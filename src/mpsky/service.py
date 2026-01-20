@@ -10,6 +10,7 @@ from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Union
+import aiohttp
 
 class Settings(BaseSettings):
     cache_path: str = ""
@@ -120,7 +121,7 @@ def get_datastore_cache_url(night):
         cachefn = [ a["href"] for a in soup.find_all("a", href=True) if pat.match(a["href"]) ]
         if len(cachefn) == 0:
             warning(f"No caches present at {base_url}")
-            return (None, None)
+            return (None, None, None)
         for fn in cachefn:
             _, night_, date, _ = fn.split('.')
             night_ = int(night_)
@@ -132,11 +133,12 @@ def get_datastore_cache_url(night):
         date = max(avail_caches[night])
     else:
         warning(f"no cache for {night:=} present in {cache_datastore}.")
-        return (None, None)
+        return (None, None, None)
 
     cache_url = f"{cache_datastore}/caches/eph.{night}.{date}.bin"
     catalog_url = f"{cache_datastore}/catalogs/mpcorb-orbits.{date}.csv"
-    return (cache_url, catalog_url)
+    db_url = f"{cache_datastore}/catalogs/mpcorb.{date}.sqlite"
+    return (cache_url, catalog_url, db_url)
 
 def list_to_intervals(vals):
     vals = sorted(vals)
@@ -166,7 +168,6 @@ async def _download_to(url: str, dest: str) -> None:
     fn = os.path.basename(dest)
     tmp = os.path.join(dir, f"tmp.{fn}")
 
-    import aiohttp
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as r:
             r.raise_for_status()
@@ -212,7 +213,7 @@ async def get_cache(night):
 
 async def _do_get_cache(night):
     # retrieve from data store
-    cache_url, catalog_url = get_datastore_cache_url(night)
+    cache_url, catalog_url, dbfn_url = get_datastore_cache_url(night)
     if cache_url is None:
         raise Exception(f"{night=} not in available in {settings.cache_datastore} (nights available: {list_to_intervals(avail_caches.keys())})")
 
@@ -225,8 +226,8 @@ async def _do_get_cache(night):
         tmpdir = tempfile.gettempdir() + f"/mpsky-caches.{getpass.getuser()}"
         os.makedirs(tmpdir, exist_ok=True)
 
-    fn, catfn = cache_url.split('/')[-1], catalog_url.split('/')[-1]
-    fn, catfn = f"{tmpdir}/downloaded.{fn}", f"{tmpdir}/downloaded.{catfn}" # prefix them with 'downloaded.' so they're easy to find for eviction
+    fn, catfn, dbfn = cache_url.split('/')[-1], catalog_url.split('/')[-1], dbfn_url.split('/')[-1]
+    fn, catfn, dbfn = f"{tmpdir}/downloaded.{fn}", f"{tmpdir}/downloaded.{catfn}", f"{tmpdir}/downloaded.{dbfn}" # prefix them with 'downloaded.' so they're easy to find for eviction
 
     # fetch the files, caching them locally; skip if they're already fetched
     if not os.path.exists(fn):
@@ -236,12 +237,27 @@ async def _do_get_cache(night):
         os.utime(fn, None)  # touch for cache management
         info(f"{fn} already downloaded.")
 
-    if not os.path.exists(catfn):
-        info(f"downloading {catalog_url} ...")
-        await _download_to(catalog_url, catfn)
+    if not os.path.exists(dbfn):
+        info(f"downloading {dbfn_url}")
+        try:
+            await _download_to(dbfn_url, dbfn)
+        except aiohttp.client_exceptions.ClientResponseError:
+            info(f"error downloading .sqlite db, falling back to .csv.")
+            pass
     else:
-        os.utime(catfn, None)  # touch for cache management
-        info(f"{catfn} already downloaded.")
+        os.utime(dbfn, None) # touch for cache management
+        info(f"{dbfn} already downloaded.")
+
+    # this is a fallback path, if dbfn wasn't found
+    if not os.path.exists(dbfn):
+        if not os.path.exists(catfn):
+            info(f"downloading {catalog_url}")
+            await _download_to(catalog_url, catfn)
+        else:
+            os.utime(catfn, None)  # touch for cache management
+            info(f"{catfn} already downloaded.")
+    else:
+        catfn = dbfn
 
     # load and cache them
     val = load_cache(fn, catfn)

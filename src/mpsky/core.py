@@ -535,6 +535,11 @@ def query(comps, idx, t, ra, dec, radius, catalog):
             placeholders = ",".join(["?"] * len(name))
             query = f"SELECT * FROM mpc_orbits WHERE designation IN ({placeholders})"
             elements = pd.read_sql_query(query, con, params=name)
+            if len(elements) != len(name):
+                print(f"{name=}")
+                print(f"{elements['designation']=}")
+                print("Issue with sqlite mpc_orbits db; some objects are missing. Could be packed v. unpacked mismatch?")
+                assert len(elements) == len(name)
     else:
         elements = None
 
