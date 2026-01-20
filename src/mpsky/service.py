@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException, Query
 from fastapi.responses import JSONResponse
 from logging import info, error, warning, debug
 import time
@@ -8,6 +8,8 @@ import sys, asyncio
 import os
 from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta
+from enum import Enum
+from typing import Union
 
 class Settings(BaseSettings):
     cache_path: str = ""
@@ -34,9 +36,27 @@ def load_cache(fn, catfn):
 
     if catfn:
         info(f"Loading the catalog from {catfn}.")
-        import pandas as pd
-        catalog = pd.read_csv(catfn)
-        catalog.set_index("ObjID", inplace=True)
+        if catfn.endswith(".sqlite"):
+            import sqlite3
+            con = sqlite3.connect(f"file:{catfn}?mode=ro", uri=True)
+
+            # in tests on usdf-rsp-dev these settings seem to speed
+            # up the queries by 20%-25% (~100 ms --> 75ms at best,
+            # when querying on 5000 random designations)
+            #
+            con.execute("PRAGMA query_only=ON")
+            con.executescript("""
+                PRAGMA temp_store=MEMORY;
+                PRAGMA mmap_size=2147483648;
+                PRAGMA cache_size=-1048576;
+                PRAGMA locking_mode=EXCLUSIVE;
+            """)
+
+            catalog = con
+        else:
+            import pandas as pd
+            catalog = pd.read_csv(catfn)
+            catalog.set_index("ObjID", inplace=True)
     else:
         info(f"No catalog to load")
 
@@ -288,18 +308,36 @@ import pickle
 import pyarrow as pa
 import io
 
+class ReturnElements(str, Enum):
+    none = "none"
+    basic = "basic"
+    extended = "extended"
+
 @app.get("/ephemerides/")
-async def read_ephemerides(t: float, ra: float, dec: float, radius: float, return_elements: bool = False):
+async def read_ephemerides(t: float, ra: float, dec: float, radius: float, return_elements: Union[bool, ReturnElements] = Query(False)):
     # performance
     import time
     t0 = time.perf_counter()
+
+    # normalize return_elements. We take bool for backwards compatibility
+    if isinstance(return_elements, bool):
+        return_elements = ReturnElements.basic if return_elements else ReturnElements.none
 
     # chose which cache to utilize
     night = ac.utc_to_night(t)
     comps, idx, catalog = get_cache(night)
 
-    pass_catalog = catalog if return_elements else None
+    pass_catalog = catalog if return_elements != ReturnElements.none else None
     name, ra, dec, p, op, tmin, tmax, elements = ac.query(comps, idx, t, ra, dec, radius, pass_catalog)
+
+    # return what's been asked for
+    if return_elements == ReturnElements.basic:
+        if "epoch_mjd" in elements.columns:
+            elements.rename(columns={"i": "inc", "argperi": "argPeri", "peri_time":"t_p_MJD_TDB", "epoch_mjd":"epochMJD_TDB", "unpacked_primary_provisional_designation": "ObjID"}, inplace=True)
+            elements = elements["q e inc node argPeri t_p_MJD_TDB epochMJD_TDB".split()]
+    elif return_elements == ReturnElements.extended:
+        # we allow the return to be basic, if that's all we have loaded
+        pass
 
     duration = time.perf_counter() - t0
 
@@ -309,7 +347,7 @@ async def read_ephemerides(t: float, ra: float, dec: float, radius: float, retur
         info(f"# elements: {len(elements)}")
 
     ret = ac.ipc_write(name, ra, dec, op, p, tmin, tmax, elements)
-    ac.ipc_read(ret)
+#    ac.ipc_read(ret)
     return Response(content=ret, media_type='application/octet-stream')
 
     ret = pickle.dumps(

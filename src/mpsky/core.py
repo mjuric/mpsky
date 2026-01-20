@@ -26,6 +26,7 @@ def haversine(lon1, lat1, lon2, lat2):
     return np.degrees(c)
 
 ELEMENTS_LIST   = "q e inc node argPeri t_p_MJD_TDB epochMJD_TDB".split()
+ELEMENTS_LIST_MPC_ORBITS = "designation|id|packed_primary_provisional_designation|unpacked_primary_provisional_designation|mpc_orb_jsonb|created_at|updated_at|orbit_type_int|u_param|nopp|arc_length_total|arc_length_sel|nobs_total|nobs_total_sel|a|q|e|i|node|argperi|peri_time|yarkovsky|srp|a1|a2|a3|dt|mean_anomaly|period|mean_motion|a_unc|q_unc|e_unc|i_unc|node_unc|argperi_unc|peri_time_unc|yarkovsky_unc|srp_unc|a1_unc|a2_unc|a3_unc|dt_unc|mean_anomaly_unc|period_unc|mean_motion_unc|epoch_mjd|h|g|not_normalized_rms|normalized_rms|earth_moid|fitting_datetime".split('|')
 ELEMENTS_FORMAT = " ".join([ "{:> 11f}" ] * len(ELEMENTS_LIST))
 HEADER_FORMAT = "{:>11s} {:>11s} {:>11s} {:>11s} {:>11s} {:>13s}  {:>12s}"
 
@@ -40,7 +41,11 @@ def ipc_write(name, ra, dec, op, p, tmin, tmax, elements):
 
     # add the columns from elements, if passed
     if elements is not None:
-        for col in ELEMENTS_LIST:
+        if "mpc_orb_jsonb" in elements.columns:
+            colnames = ELEMENTS_LIST_MPC_ORBITS
+        else:
+            colnames = ELEMENTS_LIST
+        for col in colnames:
             data.append(pa.array(elements[col].values))
             names.append(col)
 
@@ -60,7 +65,11 @@ def ipc_read(msg):
 
     # construct an elements pandas dataframe
     if "q" in schema.names:
-        cols = { col: r[col].to_numpy() for col in ELEMENTS_LIST }
+        if "mpc_orb_jsonb" in schema.names:
+            colnames = ELEMENTS_LIST_MPC_ORBITS
+        else:
+            colnames = ELEMENTS_LIST
+        cols = { col: r[col].to_numpy(zero_copy_only=False) for col in colnames }
         elements = pd.DataFrame(cols)
     else:
         elements = None
@@ -519,7 +528,13 @@ def query(comps, idx, t, ra, dec, radius, catalog):
     
     # match elements, if requested
     if catalog is not None:
-        elements = catalog.loc[name]
+        if isinstance(catalog, pd.DataFrame):
+            elements = catalog.loc[name]
+        else:
+            con = catalog
+            placeholders = ",".join(["?"] * len(name))
+            query = f"SELECT * FROM mpc_orbits WHERE designation IN ({placeholders})"
+            elements = pd.read_sql_query(query, con, params=name)
     else:
         elements = None
 
@@ -610,8 +625,11 @@ def cmd_query(args):
             for n, r, d, dd in zip(name, ra, dec, dist):
                 print(f"{n:10s} {r:13.8f} {d:13.8f} {dd:13.8f}")
         else:
-            print(("#   object            ra           dec          dist " + HEADER_FORMAT).format(*elements.columns))
-            for values in zip(name, ra, dec, dist, *elements.to_numpy().T):
+            print(("#   object            ra           dec          dist " + HEADER_FORMAT).format(*ELEMENTS_LIST))
+            if "mpc_orb_jsonb" in elements.columns:
+                # rename the columns
+                elements.rename(columns={"i": "inc", "argperi": "argPeri", "peri_time":"t_p_MJD_TDB", "epoch_mjd":"epochMJD_TDB", "unpacked_primary_provisional_designation": "ObjID"}, inplace=True)
+            for values in zip(name, ra, dec, dist, *elements[ELEMENTS_LIST].to_numpy().T):
                 print(("{:10s} {:13.8f} {:13.8f} {:13.8f} " + ELEMENTS_FORMAT).format(*values))
         assert np.all(dist <= args.radius)
         print(f"# objects: {len(name)}")
@@ -657,7 +675,7 @@ def main():
     parser_query.add_argument('ra', type=float, help='Right ascension (degrees)')
     parser_query.add_argument('dec', type=float, help='Declination (degrees)')
     parser_query.add_argument('--radius', type=float, default=1, help='Search radius (degrees)')
-    parser_query.add_argument('--return-elements', action='store_true', help='Return the orbital elements with the ephemerides')
+    parser_query.add_argument("--return-elements", nargs="?", const="extended", choices=("none", "basic", "extended"), default="none", help="Return orbital elements with the ephemerides: none (default), basic, or extended. If used without value, defaults to 'extended'",)
     parser_query.add_argument('--no-index', action='store_true', default=False, help='Do not use the healpix index.')
     parser_query.add_argument('--format', type=str, choices=['table', 'json'], default='table', help='Output format.')
     url = os.getenv("MPSKY_URL", 'https://sky.dirac.dev/ephemerides/')
