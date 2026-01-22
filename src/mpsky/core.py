@@ -26,7 +26,7 @@ def haversine(lon1, lat1, lon2, lat2):
     return np.degrees(c)
 
 ELEMENTS_LIST   = "q e inc node argPeri t_p_MJD_TDB epochMJD_TDB".split()
-ELEMENTS_LIST_MPC_ORBITS = "designation|id|packed_primary_provisional_designation|unpacked_primary_provisional_designation|mpc_orb_jsonb|created_at|updated_at|orbit_type_int|u_param|nopp|arc_length_total|arc_length_sel|nobs_total|nobs_total_sel|a|q|e|i|node|argperi|peri_time|yarkovsky|srp|a1|a2|a3|dt|mean_anomaly|period|mean_motion|a_unc|q_unc|e_unc|i_unc|node_unc|argperi_unc|peri_time_unc|yarkovsky_unc|srp_unc|a1_unc|a2_unc|a3_unc|dt_unc|mean_anomaly_unc|period_unc|mean_motion_unc|epoch_mjd|h|g|not_normalized_rms|normalized_rms|earth_moid|fitting_datetime".split('|')
+ELEMENTS_LIST_MPC_ORBITS = "designation|Vmag|id|packed_primary_provisional_designation|unpacked_primary_provisional_designation|mpc_orb_jsonb|created_at|updated_at|orbit_type_int|u_param|nopp|arc_length_total|arc_length_sel|nobs_total|nobs_total_sel|a|q|e|i|node|argperi|peri_time|yarkovsky|srp|a1|a2|a3|dt|mean_anomaly|period|mean_motion|a_unc|q_unc|e_unc|i_unc|node_unc|argperi_unc|peri_time_unc|yarkovsky_unc|srp_unc|a1_unc|a2_unc|a3_unc|dt_unc|mean_anomaly_unc|period_unc|mean_motion_unc|epoch_mjd|h|g|not_normalized_rms|normalized_rms|earth_moid|fitting_datetime".split('|')
 ELEMENTS_FORMAT = " ".join([ "{:> 11f}" ] * len(ELEMENTS_LIST))
 HEADER_FORMAT = "{:>11s} {:>11s} {:>11s} {:>11s} {:>11s} {:>13s}  {:>12s}"
 
@@ -109,7 +109,7 @@ def build_healpix_index(comps, nside, dt_minutes=5):
     # compute position vector
     (tmin, tmax), op, p, objects = comps
     t = np.arange(tmin, tmax, dt_minutes/(24*60))
-    objects, xyz = decompress(t, comps, return_ephem=False)
+    objects, (xyz, _) = decompress(t, comps, return_ephem=False)
 
     # compute healpix pixel corresponding to this vector
     x, y, z = xyz
@@ -211,6 +211,8 @@ def cart_to_sph(xyz):
 
     return ra, dec
 
+import numpy as np
+
 def decompress(t_mjd, comps, return_ephem=False):
     (tmin, tmax), op, p, objects = comps
 
@@ -219,14 +221,14 @@ def decompress(t_mjd, comps, return_ephem=False):
         raise Exception(f"The interpolation is valid from {tmin} to {tmax}")
     t = t_mjd - tmin
 
-    oxyz2 = np.polynomial.chebyshev.chebval(t, op)  # Decompress topo position
-    axyz2 = np.polynomial.chebyshev.chebval(t, p)   # Decompress asteroid position
-    xyz = axyz2 - oxyz2[:, np.newaxis]              # Obs-Ast vector
+    oxyz2 = np.polynomial.chebyshev.chebval(t, op)  # Decompress topo position (r_observer)
+    axyz2 = np.polynomial.chebyshev.chebval(t, p)   # Decompress asteroid position (r)
+    xyz = axyz2 - oxyz2[:, np.newaxis]              # Obs-Ast vector (delta_topo)
 
     if not return_ephem:
-        return objects, xyz
+        return objects, (xyz, axyz2)
     else:
-        return objects, xyz, cart_to_sph(xyz)
+        return objects, (xyz, axyz2), cart_to_sph(xyz)
 
 def merge_comps(compslist):
     from tqdm import tqdm
@@ -488,6 +490,58 @@ def find_comp(comps, idx, t):
 
     raise Exception(f"t={t} not in available ranges ({tminmax})")
 
+def hg_apparent_mag(r_helio, delta_topo, H, G):
+    """
+    Vectorized IAU H–G apparent magnitude.
+
+    Parameters
+    ----------
+    r_helio : ndarray
+        Heliocentric vectors Sun->asteroid, shape (3,) or (3, nobs), AU
+    delta_topo : ndarray
+        Topocentric vectors observer->asteroid, shape (3,) or (3, nobs), AU
+    H : float or ndarray
+        Absolute magnitude(s), shape () or (nobs,)
+    G : float or ndarray
+        Slope parameter(s), shape () or (nobs,)
+
+    Returns
+    -------
+    V : ndarray
+        Apparent V-band magnitude(s), shape (nobs,)
+    """
+
+    r_helio = np.asarray(r_helio)
+    delta_topo = np.asarray(delta_topo)
+    H = np.asarray(H)
+    G = np.asarray(G)
+
+    # Ensure 2D vector form: (3, nobs)
+    if r_helio.ndim == 1:
+        r_helio = r_helio[:, None]
+    if delta_topo.ndim == 1:
+        delta_topo = delta_topo[:, None]
+
+    # Distances
+    r = np.linalg.norm(r_helio, axis=0)
+    d = np.linalg.norm(delta_topo, axis=0)
+
+    # Phase angle
+    cos_alpha = np.sum(r_helio * delta_topo, axis=0) / (r * d)
+    cos_alpha = np.clip(cos_alpha, -1.0, 1.0)
+    alpha = np.arccos(cos_alpha)  # radians
+
+    tan_half = np.tan(alpha / 2.0)
+
+    # H–G phase functions
+    phi1 = np.exp(-3.33 * tan_half**0.63)
+    phi2 = np.exp(-1.87 * tan_half**1.22)
+
+    phase = (1.0 - G) * phi1 + G * phi2
+
+    # Apparent magnitude
+    V = H + 5.0 * np.log10(r * d) - 2.5 * np.log10(phase)
+    return V
 
 def query(comps, idx, t, ra, dec, radius, catalog):
     # find the right night
@@ -511,7 +565,8 @@ def query(comps, idx, t, ra, dec, radius, catalog):
         comps2 = comps
 
     # decompress for a single time
-    objects, xyz = decompress(t, comps2, return_ephem=False)
+    objects, (xyz, r_helio) = decompress(t, comps2, return_ephem=False)
+    delta_topo = xyz.copy() # save it for magnitude computation later
 
     # turn to a unit vector
     r = np.sqrt((xyz*xyz).sum(axis=0))
@@ -535,11 +590,28 @@ def query(comps, idx, t, ra, dec, radius, catalog):
             placeholders = ",".join(["?"] * len(name))
             query = f"SELECT * FROM mpc_orbits WHERE designation IN ({placeholders})"
             elements = pd.read_sql_query(query, con, params=name)
-            if len(elements) != len(name):
-                print(f"{name=}")
-                print(f"{elements['designation']=}")
-                print("Issue with sqlite mpc_orbits db; some objects are missing. Could be packed v. unpacked mismatch?")
-                assert len(elements) == len(name)
+            elements = elements.set_index("designation").loc[name].reset_index()
+
+#            # resort with vectorized numpy (doesn't appear to be any faster than above)
+#            designations = elements["designation"].to_numpy()
+#            order = np.argsort(designations)
+#            idx = order[np.searchsorted(designations[order], name)]
+#            elements = elements.take(idx)
+
+#            # resort with dict  (doesn't appear to be any faster than above)
+#            designations = elements["designation"].values
+#            pos = {v: i for i, v in enumerate(designations)}
+#            idx = np.fromiter((pos[v] for v in name), dtype=np.int64)
+#            elements = elements.iloc[idx]
+
+            # make sure all rows are properly aligned
+            assert np.all(name == elements["designation"].to_numpy())
+
+        # compute Vmag if (H, G) are available
+        if "h" in elements and "g" in elements:
+            # if we read from the full mpc_orbits, it means we have g and h
+            # so can compute the magnitude
+            elements["Vmag"] = hg_apparent_mag(r_helio[:, mask], delta_topo[:, mask], elements["h"], elements["g"])
     else:
         elements = None
 
@@ -626,16 +698,17 @@ def cmd_query(args):
         # print the results
         dist = haversine(ra, dec, args.ra, args.dec)
         if elements is None:
-            print("#   object            ra           dec          dist")
+            print("#   object            ra           dec       dist")
             for n, r, d, dd in zip(name, ra, dec, dist):
-                print(f"{n:10s} {r:13.8f} {d:13.8f} {dd:13.8f}")
+                print(f"{n:10s} {r:13.8f} {d:13.8f} {dd:10.6f}")
         else:
-            print(("#   object            ra           dec          dist " + HEADER_FORMAT).format(*ELEMENTS_LIST))
+            Vmag = elements["Vmag"] if "Vmag" in elements.columns else np.full(len(dist), np.nan)
+            print(("#   object            ra           dec   Vmag       dist " + HEADER_FORMAT).format(*ELEMENTS_LIST))
             if "mpc_orb_jsonb" in elements.columns:
                 # rename the columns
                 elements.rename(columns={"i": "inc", "argperi": "argPeri", "peri_time":"t_p_MJD_TDB", "epoch_mjd":"epochMJD_TDB", "unpacked_primary_provisional_designation": "ObjID"}, inplace=True)
-            for values in zip(name, ra, dec, dist, *elements[ELEMENTS_LIST].to_numpy().T):
-                print(("{:10s} {:13.8f} {:13.8f} {:13.8f} " + ELEMENTS_FORMAT).format(*values))
+            for values in zip(name, ra, dec, Vmag, dist, *elements[ELEMENTS_LIST].to_numpy().T):
+                print(("{:10s} {:13.8f} {:13.8f} {:6.3f} {:10.6f} " + ELEMENTS_FORMAT).format(*values))
         assert np.all(dist <= args.radius)
         print(f"# objects: {len(name)}")
         print(f"# query time: {duration*1000:.2f}msec")
