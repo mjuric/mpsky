@@ -658,6 +658,7 @@ def cmd_serve(args):
 
 def cmd_query(args):
     if args.source.startswith("http://") or args.source.startswith("https://"):
+        args.source = _fix_mpsky_url_suffix(args.source) + "/ephemerides"
         # remote service query
         assert not args.no_index, "Only valid for local queries"
         try:
@@ -716,6 +717,41 @@ def cmd_query(args):
     else:
         assert False, f"uh, oh, this should not happen. Format {args.format=} is unrecognized."
 
+def _fetch_server_version(source: str) -> dict:
+    base = source.rstrip("/")
+    url = f"{base}/version"
+
+    r = requests.get(url, headers={"Accept": "application/json"}, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+def cmd_server_version(args) -> int:
+    data = _fetch_server_version(args.source)
+
+    if args.format == "json":
+        import json
+        print(json.dumps(data, indent=2, sort_keys=True))
+        return 0
+
+    # text output: one key/value per line, stable order for the common fields
+    preferred = ["version", "commit_id"]
+    for k in preferred:
+        if k in data:
+            print(f"{k}: {data[k]}")
+
+    for k in sorted(set(data.keys()) - set(preferred)):
+        print(f"{k}: {data[k]}")
+
+    return 0
+
+def _fix_mpsky_url_suffix(url):
+    suffix = "/ephemerides"
+    if url.rstrip("/").endswith(suffix):
+        url = url.rstrip("/")[: -len(suffix)]
+        print(f"warning: the service URL you passed points to the /ephemerides endpoint. It should point to the base URL of the mpsky service instead. Please change it to point to '{url}' instead.")
+
+    return url
+
 def main():
     import argparse
     import signal
@@ -723,9 +759,15 @@ def main():
     # don't vomit exceptions when a pipe is broken (i.e., when piped to `head`)
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
+    # Read the default base URL.
+    # Backwards compatibility: if the URL ends in ephemerides/ or ephemerides,
+    # strip it and emit a warning.
+    url = _fix_mpsky_url_suffix(os.getenv("MPSKY_URL", 'https://sky.dirac.dev/'))
+
     # Create the top-level parser
-    parser = argparse.ArgumentParser(description='Asteroid Checker.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    subparsers = parser.add_subparsers(dest='command', required=True, help='Subcommands')
+    parser = argparse.ArgumentParser(description='Look up asteroids in a given field.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("--version", action="store_true", help="Print version and exit.",)
+    subparsers = parser.add_subparsers(dest='command', help='Subcommands')
 
     # Create the parser for the "compress" command
     parser_build = subparsers.add_parser('build', help='Compress ephemerides files.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -756,11 +798,25 @@ def main():
     parser_query.add_argument("--return-elements", nargs="?", const="extended", choices=("none", "basic", "extended"), default="none", help="Return orbital elements with the ephemerides: none (default), basic, or extended. If used without value, defaults to 'extended'",)
     parser_query.add_argument('--no-index', action='store_true', default=False, help='Do not use the healpix index.')
     parser_query.add_argument('--format', type=str, choices=['table', 'json'], default='table', help='Output format.')
-    url = os.getenv("MPSKY_URL", 'https://sky.dirac.dev/ephemerides/')
-    parser_query.add_argument('--source', type=str, nargs='?', const=url, default=url, help=f'Local ephemerides cache file or service endpoint URL.')
+    parser_query.add_argument('--source', type=str, nargs='?', const=url, default=url, help=f'Local ephemerides cache file or service base URL.')
+
+    # Create the parser for the "server-version" command
+    parser_server_version = subparsers.add_parser("server-version", help="Fetch and display remote server version information", formatter_class=argparse.ArgumentDefaultsHelpFormatter,)
+    parser_server_version.add_argument("--source", type=str, nargs="?", const=url, default=url, help="Service base URL.",)
+    parser_server_version.add_argument("--format", type=str, choices=("text", "json"), default="text", help="Output format.",)
 
     # Parse the arguments
     args = parser.parse_args()
+
+    if args.version and args.command is None:
+        from . import _version
+        print("version:", _version.__version__)
+        print("commit_id:", _version.__commit_id__)
+        sys.exit(0)
+
+    if args.command is None:
+       parser.error("a subcommand is required (unless --version is given)")
+       sys.exit(1)
 
     # Check which command is being requested and call the appropriate function/handler
     if args.command == 'build':
@@ -769,6 +825,8 @@ def main():
         return cmd_query(args)
     elif args.command == 'serve':
         return cmd_serve(args)
+    elif args.command == 'server-version':
+        return cmd_server_version(args)
 
 if __name__ == '__main__':
     main()

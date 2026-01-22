@@ -353,7 +353,7 @@ app = FastAPI(lifespan=lifespan)
 async def add_process_time_header(request: Request, call_next):
     start_time = time.perf_counter()
     response = await call_next(request)
-    if request.url.path != "/":
+    if request.url.path.startswith("/ephemerides"):
         full_request = (
             f"{request.method} {request.url.path}"
             f"{'?' + request.url.query if request.url.query else ''} "
@@ -369,6 +369,14 @@ async def validation_exception_handler(request, exc):
 @app.get("/")
 async def read_root():
     return {"Hello": "World"}
+
+@app.get("/version")
+async def version():
+    from . import _version
+    return {
+        "version": _version.__version__,
+        "commit_id": _version.__commit_id__,
+    }
 
 from base64 import b64encode, b85encode
 import pickle
