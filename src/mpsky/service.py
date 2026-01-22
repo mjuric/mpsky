@@ -14,9 +14,10 @@ import aiohttp
 import zstandard as zstd
 
 class Settings(BaseSettings):
-    cache_path: str = ""
-    catalog_path: str = ""
-    cache_datastore: str = "https://epyc.astro.washington.edu/~mjuric/mpsky-data"	# datastore URL. Must follow the layout of gen-ephemerides-cache
+    cache_path: str = ""		# Path to local .bin file to load
+    catalog_path: str = ""		# Path to local .sqlite or .csv catalog to load
+
+    datastore_url: str = ""             # Datastore URL. Must follow the layout of gen-ephemerides-cache (https://epyc.astro.washington.edu/~mjuric/mpsky-data)
     cache_tmpdir: str = ""		# Where to store the temp files (will use a subdir in tmpdir if left empty)
     max_loaded_nights: int = 0		# How many caches (nigths) to keep in memory (default is set by mpsky serve)
     max_ondisk_nights: int = 0		# How many downloaded caches (nights) to keep on disk (default is set by mpsky serve)
@@ -72,7 +73,7 @@ def load_cache(fn, catfn):
     caches[night] = val = ((comps, idx, catalog), (fn, catfn))
     if len(caches) > settings.max_loaded_nights:
         k, v = caches.popitem(last=False) # evict least-recent
-        info(f"Evicting night={k} from in-memory cache.")
+        info(f"evicting night={k} from in-memory cache.")
 
         # Monitor that we truly are releasing memory...
         import weakref, gc
@@ -107,7 +108,7 @@ def get_datastore_cache_url(night):
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
 
-    cache_datastore = settings.cache_datastore
+    datastore_url = settings.datastore_url
 
     # Load all available caches
     now = datetime.now()
@@ -115,7 +116,7 @@ def get_datastore_cache_url(night):
     global avail_caches
     if avail_caches is None or now > cache_list_expire_time :
         avail_caches = defaultdict(list)
-        base_url = cache_datastore + '/caches'
+        base_url = datastore_url + '/caches'
         pat = re.compile(rf"^eph\.[0-9]+\..*\.bin$")
         html = requests.get(base_url + "/").text
         soup = BeautifulSoup(html, "html.parser")
@@ -133,12 +134,12 @@ def get_datastore_cache_url(night):
     if night in avail_caches:
         date = max(avail_caches[night])
     else:
-        warning(f"no cache for {night:=} present in {cache_datastore}.")
+        warning(f"no cache for {night:=} present in {datastore_url}.")
         return (None, None, None)
 
-    cache_url = f"{cache_datastore}/caches/eph.{night}.{date}.bin"
-    catalog_url = f"{cache_datastore}/catalogs/mpcorb-orbits.{date}.csv"
-    db_url = f"{cache_datastore}/catalogs/mpc_orbits.{date}.sqlite.zst"
+    cache_url = f"{datastore_url}/caches/eph.{night}.{date}.bin"
+    catalog_url = f"{datastore_url}/catalogs/mpcorb-orbits.{date}.csv"
+    db_url = f"{datastore_url}/catalogs/mpc_orbits.{date}.sqlite.zst"
     return (cache_url, catalog_url, db_url)
 
 def list_to_intervals(vals):
@@ -172,6 +173,8 @@ async def _download_to(url: str, dest: str) -> None:
     If the URL ends with '.zst', the response body is assumed to be
     zstd-compressed and is decompressed on the fly.
     """
+    info(f"downloading {url} [to {os.path.basename(dest)}]...")
+
     dir_ = os.path.dirname(dest) or "."
     fn = os.path.basename(dest)
     tmp = os.path.join(dir_, f"tmp.{fn}")
@@ -209,7 +212,7 @@ async def get_cache(night):
         pass
 
     # this is for runs without a data store
-    if settings.cache_datastore == "":
+    if settings.datastore_url == "":
         return next(caches.values())
 
     # try fetching from the datastore.
@@ -232,9 +235,9 @@ async def _do_get_cache(night):
     # retrieve from data store
     cache_url, catalog_url, dbfn_url = get_datastore_cache_url(night)
     if cache_url is None:
-        raise Exception(f"{night=} not in available in {settings.cache_datastore} (nights available: {list_to_intervals(avail_caches.keys())})")
+        raise Exception(f"{night=} not in available in {settings.datastore_url} (nights available: {list_to_intervals(avail_caches.keys())})")
 
-    # compute the local cache directory
+    # compute the local cache directory for this night
     import tempfile
     if settings.cache_tmpdir != "":
         tmpdir = settings.cache_tmpdir
@@ -243,42 +246,39 @@ async def _do_get_cache(night):
         tmpdir = tempfile.gettempdir() + f"/mpsky-caches.{getpass.getuser()}"
         os.makedirs(tmpdir, exist_ok=True)
 
-    # construct filenames
+    # set up the cache directory
+    cachedir = f"{tmpdir}/night-{night}"
+    try:
+        os.mkdir(cachedir)
+    except FileExistsError:
+        os.utime(cachedir, None)  # touch for cache expiration management
+    # touch a file that marks this dir as a mpsky cache dir
+    CACHEDIR_SENTINEL = ".mpsky-cache-dir"
+    open(f"{cachedir}/{CACHEDIR_SENTINEL}", "wb").close() 
+
+    # construct destination filenames
     fn, catfn, dbfn = cache_url.split('/')[-1], catalog_url.split('/')[-1], dbfn_url.split('/')[-1]
-    fn, catfn, dbfn = f"{tmpdir}/downloaded.{fn}", f"{tmpdir}/downloaded.{catfn}", f"{tmpdir}/downloaded.{dbfn}" # prefix them with 'downloaded.' so they're easy to find for eviction
+    fn, catfn, dbfn = f"{cachedir}/{fn}", f"{cachedir}/{catfn}", f"{cachedir}/{dbfn}" # prefix them with 'downloaded.' so they're easy to find for eviction
 
-    if not fn.endswith(".bin"):    fn = os.path.splitext(fn)[0]
-    if not catfn.endswith(".bin"): catfn = os.path.splitext(catfn)[0]
-    if not dbfn.endswith(".bin"):  dbfn = os.path.splitext(dbfn)[0]
+    # if the upstream files are compressed, construct their decompressed names
+    if not fn.endswith(".bin"):      fn = os.path.splitext(fn)[0]
+    if not catfn.endswith(".csv"):   catfn = os.path.splitext(catfn)[0]
+    if not dbfn.endswith(".sqlite"): dbfn = os.path.splitext(dbfn)[0]
 
-    # fetch the files, caching them locally; skip if they're already fetched
+    # fetch the files if they aren't already in cache
+    # for the catalog, try fetching the .sqlite database, before
+    # falling back to the old .csv
     if not os.path.exists(fn):
-        info(f"downloading {cache_url} [to {os.path.basename(fn)}]...")
         await _download_to(cache_url, fn)
-    else:
-        os.utime(fn, None)  # touch for cache management
-        info(f"{fn} already downloaded.")
 
     if not os.path.exists(dbfn):
-        info(f"downloading {dbfn_url} [to {os.path.basename(dbfn)}]")
         try:
             await _download_to(dbfn_url, dbfn)
         except aiohttp.client_exceptions.ClientResponseError:
-            info(f"error downloading .sqlite db, falling back to .csv.")
-            pass
-    else:
-        os.utime(dbfn, None) # touch for cache management
-        info(f"{dbfn} already downloaded.")
-
-    # this is a fallback path, if dbfn wasn't found
-    if not os.path.exists(dbfn):
-        if not os.path.exists(catfn):
-            info(f"downloading {catalog_url} [to {os.path.basename(catfn)}]")
-            await _download_to(catalog_url, catfn)
-        else:
-            os.utime(catfn, None)  # touch for cache management
-            info(f"{catfn} already downloaded.")
-    else:
+            info(f"couldn't download .sqlite db, falling back to .csv.")
+            if not os.path.exists(catfn):
+                await _download_to(catalog_url, catfn)
+    if os.path.exists(dbfn):
         catfn = dbfn
 
     # load and cache them
@@ -289,17 +289,19 @@ async def _do_get_cache(night):
     # keeping the used files safe(ish).
     import glob
     files = sorted(
-        glob.glob(f"{tmpdir}/downloaded.*"),
+        glob.glob(f"{tmpdir}/night-*"),
         key=os.path.getmtime,
         reverse=True
     )
-    MAX_FILE_CACHE = 2 * settings.max_ondisk_nights # Number of files per night, times number of nights to allow on disk
-    for fn in files[MAX_FILE_CACHE:]:
-        info(f"Deleting {fn} from on-disk cache.")
-        try:
-            os.remove(fn)
-        except OSError as e:
-            error(f"Failed to delete {fn} [{e.message=}]")
+    for dir in files[settings.max_ondisk_nights:]:
+        info(f"evicting {dir} from on-disk cache.")
+        import shutil
+        # since we're deleting recursively (dangerous!), let's add some
+        # guardrails. Only delete if we find the sentinel file.
+        if os.path.exists(f"{dir}/{CACHEDIR_SENTINEL}"):
+            shutil.rmtree(dir, ignore_errors=True)
+        else:
+            warning(f"no {CACHEDIR_SENTINEL} file in {dir}; refusing to delete it out of abundance of caution.")
 
     return val
 
@@ -328,7 +330,7 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     info(f"Initial cache load path: {settings.cache_path}")
-    info(f"Cache data store URL: {settings.cache_datastore}")
+    info(f"Cache data store URL: {settings.datastore_url}")
     info(f"Settings: {settings.max_loaded_nights=}, {settings.max_ondisk_nights=}")
 
     # preload the initial file

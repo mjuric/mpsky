@@ -641,7 +641,7 @@ def cmd_serve(args):
     # This will be read by the Settings in the service
     import os
     os.environ["CACHE_PATH"] = args.cache_path
-    os.environ["CACHE_DATASTORE"] = args.cache_datastore
+    os.environ["DATASTORE_URL"] = args.datastore_url
     os.environ["CATALOG_PATH"] = args.catalog
     os.environ["MAX_LOADED_NIGHTS"] = str(args.max_loaded_nights)
     os.environ["MAX_ONDISK_NIGHTS"] = str(args.max_ondisk_nights)
@@ -743,7 +743,7 @@ def main():
     parser_serve.add_argument('--log-config', type=str, help='Uvicorn logging configuration file.')
     parser_serve.add_argument('--verbose', action='store_true', default=False, help='Activate verbose logging.')
     parser_serve.add_argument('--catalog', type=str, default="", help='Catalog file with additional data corresponding to the objects in cache.')
-    parser_serve.add_argument('--cache-datastore', type=str, default="https://epyc.astro.washington.edu/~mjuric/mpsky-data", help='Data store of nightly caches.')
+    parser_serve.add_argument('--datastore', dest="datastore_url", type=str, default="https://epyc.astro.washington.edu/~mjuric/mpsky-data", help='Data store of nightly caches (URL).')
     parser_serve.add_argument('--max-loaded-nights', type=int, default=7, help='Maximum number of nights to keep serving from memory')
     parser_serve.add_argument('--max-ondisk-nights', type=int, default=14, help='Maximum number of nights to keep downloaded in the disk cache')
 
