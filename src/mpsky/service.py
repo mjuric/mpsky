@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Union
 import aiohttp
+import zstandard as zstd
 
 class Settings(BaseSettings):
     cache_path: str = ""
@@ -137,7 +138,7 @@ def get_datastore_cache_url(night):
 
     cache_url = f"{cache_datastore}/caches/eph.{night}.{date}.bin"
     catalog_url = f"{cache_datastore}/catalogs/mpcorb-orbits.{date}.csv"
-    db_url = f"{cache_datastore}/catalogs/mpcorb.{date}.sqlite"
+    db_url = f"{cache_datastore}/catalogs/mpc_orbits.{date}.sqlite.zst"
     return (cache_url, catalog_url, db_url)
 
 def list_to_intervals(vals):
@@ -161,19 +162,35 @@ def list_to_intervals(vals):
 
     return f"{out}"
 
+import os
+import aiohttp
+import zstandard as zstd
+
 async def _download_to(url: str, dest: str) -> None:
-    """ Downloads a URL to file using aiohttp
+    """Download a URL to file using aiohttp.
+
+    If the URL ends with '.zst', the response body is assumed to be
+    zstd-compressed and is decompressed on the fly.
     """
-    dir = os.path.dirname(dest) or "."
+    dir_ = os.path.dirname(dest) or "."
     fn = os.path.basename(dest)
-    tmp = os.path.join(dir, f"tmp.{fn}")
+    tmp = os.path.join(dir_, f"tmp.{fn}")
+
+    decompress_zstd = url.endswith(".zst")
 
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as r:
             r.raise_for_status()
+
             with open(tmp, "wb") as f:
-                async for chunk in r.content.iter_chunked(1 << 20):
-                    f.write(chunk)
+                if not decompress_zstd:
+                    async for chunk in r.content.iter_chunked(1 << 20):
+                        f.write(chunk)
+                else:
+                    dctx = zstd.ZstdDecompressor()
+                    with dctx.stream_writer(f, closefd=False) as zw:
+                        async for chunk in r.content.iter_chunked(1 << 20):
+                            zw.write(chunk)
 
     os.replace(tmp, dest)  # atomic rename on POSIX
 
@@ -226,19 +243,24 @@ async def _do_get_cache(night):
         tmpdir = tempfile.gettempdir() + f"/mpsky-caches.{getpass.getuser()}"
         os.makedirs(tmpdir, exist_ok=True)
 
+    # construct filenames
     fn, catfn, dbfn = cache_url.split('/')[-1], catalog_url.split('/')[-1], dbfn_url.split('/')[-1]
     fn, catfn, dbfn = f"{tmpdir}/downloaded.{fn}", f"{tmpdir}/downloaded.{catfn}", f"{tmpdir}/downloaded.{dbfn}" # prefix them with 'downloaded.' so they're easy to find for eviction
 
+    if not fn.endswith(".bin"):    fn = os.path.splitext(fn)[0]
+    if not catfn.endswith(".bin"): catfn = os.path.splitext(catfn)[0]
+    if not dbfn.endswith(".bin"):  dbfn = os.path.splitext(dbfn)[0]
+
     # fetch the files, caching them locally; skip if they're already fetched
     if not os.path.exists(fn):
-        info(f"downloading {cache_url} ...")
+        info(f"downloading {cache_url} [to {os.path.basename(fn)}]...")
         await _download_to(cache_url, fn)
     else:
         os.utime(fn, None)  # touch for cache management
         info(f"{fn} already downloaded.")
 
     if not os.path.exists(dbfn):
-        info(f"downloading {dbfn_url}")
+        info(f"downloading {dbfn_url} [to {os.path.basename(dbfn)}]")
         try:
             await _download_to(dbfn_url, dbfn)
         except aiohttp.client_exceptions.ClientResponseError:
@@ -251,7 +273,7 @@ async def _do_get_cache(night):
     # this is a fallback path, if dbfn wasn't found
     if not os.path.exists(dbfn):
         if not os.path.exists(catfn):
-            info(f"downloading {catalog_url}")
+            info(f"downloading {catalog_url} [to {os.path.basename(catfn)}]")
             await _download_to(catalog_url, catfn)
         else:
             os.utime(catfn, None)  # touch for cache management

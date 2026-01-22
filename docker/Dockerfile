@@ -2,7 +2,7 @@ FROM condaforge/miniforge3
 
 ARG MPSKY_BRANCH="main"
 
-RUN mamba install -c conda-forge pytables tqdm pyarrow healpy pydantic-settings astropy pandas requests uvicorn fastapi
+RUN mamba install -c conda-forge pytables tqdm pyarrow healpy pydantic-settings astropy pandas requests uvicorn fastapi zstandard
 RUN apt-get update && apt-get install -y bc curl && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # install mpsky from source

@@ -25,7 +25,8 @@ dependencies = [
     "pandas",
     "requests",
     "uvicorn",
-    "fastapi"
+    "fastapi",
+    "zstandard",
 ]
 
 [project.scripts]
