@@ -152,7 +152,7 @@ def compress(df, cheby_order = 3, observer_cheby_order = 7):
     assert len(df) % nobj == 0, "All objects must have been observed at the same times"
 
     # extract times
-    t = df["fieldMJD_TAI"].values[0:nobs]
+    t = df["fieldMJD_TAI"].to_numpy(copy=True)[:nobs]
     tmin, tmax = t.min(), t.max()
     t -= tmin
     assert np.max(t) < 1.0#np.all(np.round(t) == 0), "Hmmm... the adjusted times should span [0, 1) day range"
