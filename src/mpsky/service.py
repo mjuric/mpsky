@@ -317,19 +317,28 @@ async def rollover_to_new_night():
         # that the current night could get evicted fromt the cache
         # if it's not used frequently; if that happens, this code
         # won't try to reload it.
+        #
+        # Also, this code may try to download the next night before
+        # it's available on the datastore. It that happens, we'll
+        # retry (that's why it's wrapped in an exception handler)
         from astropy.time import Time
         night = ac.utc_to_night(Time.now().mjd)
         if night != current_night:
             info(f"rollover_to_new_night: loading current {night=}")
-            await get_cache(night)
-            current_night = night
+            try:
+                await get_cache(night)
+                current_night = night
+            except Exception as e:
+                info(f"rollover_to_new_night: {e}")
+        #else:
+        #    info(f"rollover_to_new_night: now={night}, {current_night=}, cache state: {tuple(caches.keys())}")
 
         await asyncio.sleep(60)
 
 from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    info(f"Initial cache load path: {settings.cache_path}")
+    info(f"Initial cache file to load: {settings.cache_path}")
     info(f"Cache data store URL: {settings.datastore_url}")
     info(f"Settings: {settings.max_loaded_nights=}, {settings.max_ondisk_nights=}")
 
@@ -353,7 +362,7 @@ app = FastAPI(lifespan=lifespan)
 async def add_process_time_header(request: Request, call_next):
     start_time = time.perf_counter()
     response = await call_next(request)
-    if request.url.path.startswith("/ephemerides"):
+    if request.url.path.startswith("/ephemerides") or request.url.path.startswith("/version"):
         full_request = (
             f"{request.method} {request.url.path}"
             f"{'?' + request.url.query if request.url.query else ''} "

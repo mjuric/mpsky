@@ -587,10 +587,13 @@ def query(comps, idx, t, ra, dec, radius, catalog):
             elements = catalog.loc[name]
         else:
             con = catalog
+            idxcol = "unpacked_primary_provisional_designation" if (np.char.find(name, " ") >= 0).any() else "packed_primary_provisional_designation"
+            print(f"{idxcol=} {name[0]=}")
+
             placeholders = ",".join(["?"] * len(name))
-            query = f"SELECT * FROM mpc_orbits WHERE designation IN ({placeholders})"
+            query = f"SELECT * FROM mpc_orbits WHERE {idxcol} IN ({placeholders})"
             elements = pd.read_sql_query(query, con, params=name)
-            elements = elements.set_index("designation").loc[name].reset_index()
+            elements = elements.set_index(idxcol).loc[name].reset_index()
 
 #            # resort with vectorized numpy (doesn't appear to be any faster than above)
 #            designations = elements["designation"].to_numpy()
@@ -605,7 +608,7 @@ def query(comps, idx, t, ra, dec, radius, catalog):
 #            elements = elements.iloc[idx]
 
             # make sure all rows are properly aligned
-            assert np.all(name == elements["designation"].to_numpy())
+            assert np.all(name == elements[idxcol].to_numpy())
 
         # compute Vmag if (H, G) are available
         if "h" in elements and "g" in elements:
