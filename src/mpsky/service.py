@@ -167,7 +167,7 @@ import os
 import aiohttp
 import zstandard as zstd
 
-async def _download_to(url: str, dest: str) -> None:
+async def _download_to(url: str, dest: str, timeout=600) -> None:
     """Download a URL to file using aiohttp.
 
     If the URL ends with '.zst', the response body is assumed to be
@@ -181,7 +181,8 @@ async def _download_to(url: str, dest: str) -> None:
 
     decompress_zstd = url.endswith(".zst")
 
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(timeout)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url) as r:
             r.raise_for_status()
 

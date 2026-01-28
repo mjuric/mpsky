@@ -48,9 +48,7 @@ def ipc_write(name, ra, dec, op, p, tmin, tmax, elements):
             if len(elements) == 0:
                 # force dtypes so old clients that don't set zero_copy_only=False
                 # deserialize correctly
-                print(elements.dtypes)
                 elements = elements.astype("float64")
-                print(elements.dtypes)
         for col in colnames:
             data.append(pa.array(elements[col].values))
             names.append(col)
