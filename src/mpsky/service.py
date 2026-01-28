@@ -329,7 +329,7 @@ async def rollover_to_new_night():
                 await get_cache(night)
                 current_night = night
             except Exception as e:
-                info(f"rollover_to_new_night: {e}")
+                info(f"rollover_to_new_night: {type(e)} -- {e}")
         #else:
         #    info(f"rollover_to_new_night: now={night}, {current_night=}, cache state: {tuple(caches.keys())}")
 
