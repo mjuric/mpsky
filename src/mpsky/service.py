@@ -248,6 +248,7 @@ async def _do_get_cache(night):
 
     # set up the cache directory
     cachedir = f"{tmpdir}/night-{night}"
+    info(f"local cache directory: {cachedir}")
     try:
         os.mkdir(cachedir)
     except FileExistsError:
