@@ -588,7 +588,6 @@ def query(comps, idx, t, ra, dec, radius, catalog):
         else:
             con = catalog
             idxcol = "unpacked_primary_provisional_designation" if (np.char.find(name, " ") >= 0).any() else "packed_primary_provisional_designation"
-            print(f"{idxcol=} {name[0]=}")
 
             placeholders = ",".join(["?"] * len(name))
             query = f"SELECT * FROM mpc_orbits WHERE {idxcol} IN ({placeholders})"
