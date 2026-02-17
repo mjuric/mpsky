@@ -96,7 +96,7 @@ def load_cache(fn, catfn):
 
     return val[0]
 
-avail_caches, cache_list_expire_time = None, None
+avail_caches, cache_list_expire_time = None, datetime(1, 1, 1)
 def get_datastore_cache_url(night):
     """ Find the URLs to caches in the datastore, for a given night.
     
@@ -114,7 +114,7 @@ def get_datastore_cache_url(night):
     now = datetime.now()
     global cache_list_expire_time
     global avail_caches
-    if avail_caches is None or now > cache_list_expire_time :
+    if avail_caches is None or now > cache_list_expire_time:
         avail_caches = defaultdict(list)
         base_url = datastore_url + '/caches'
         pat = re.compile(rf"^eph\.[0-9]+\..*\.bin$")
