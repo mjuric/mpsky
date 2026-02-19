@@ -547,6 +547,28 @@ def hg_apparent_mag(r_helio, delta_topo, H, G):
     V = H + 5.0 * np.log10(r * d) - 2.5 * np.log10(phase)
     return V
 
+def numpy_struct_to_pandas_dtype_map(npdt):
+    out = {}
+    for name in npdt.names:
+        dt = npdt.fields[name][0]
+        k = dt.kind
+
+        if k in "iu":
+            out[name] = "Int64"
+        elif k == "f":
+            out[name] = "Float64"
+        elif k == "b":
+            out[name] = "boolean"
+        elif k in "SUO":
+            out[name] = "string"
+        elif k == "M":
+            out[name] = "datetime64[ns]"
+        else:
+            # fallback — rarely needed
+            out[name] = "object"
+
+    return out
+
 def query(comps, idx, t, ra, dec, radius, catalog):
     # find the right night
     comps, idx = find_comp(comps, idx, t)
@@ -594,8 +616,9 @@ def query(comps, idx, t, ra, dec, radius, catalog):
             idxcol = "unpacked_primary_provisional_designation" if (np.char.find(name, " ") >= 0).any() else "packed_primary_provisional_designation"
 
             placeholders = ",".join(["?"] * len(name))
+            from .schema import mpc_orbitsDtype
             query = f"SELECT * FROM mpc_orbits WHERE {idxcol} IN ({placeholders})"
-            elements = pd.read_sql_query(query, con, params=name)
+            elements = pd.read_sql_query(query, con, params=name, dtype=numpy_struct_to_pandas_dtype_map(mpc_orbitsDtype))
             elements = elements.set_index(idxcol).loc[name].reset_index()
 
 #            # resort with vectorized numpy (doesn't appear to be any faster than above)
@@ -694,6 +717,12 @@ def cmd_query(args):
         if elements is not None:
             df = pd.concat([df, elements], axis=1)
         df["ast_cheby"] = [ p[:, :, i].T.tolist() for i in range(p.shape[2]) ]
+
+        # change all timestamp fields to strings
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = df[col].dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
         data = {
             "ast": df.to_dict(orient="records"),
             "topo_cheby": op.T.tolist()
