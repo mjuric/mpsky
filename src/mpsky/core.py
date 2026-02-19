@@ -58,6 +58,21 @@ def ipc_write(name, ra, dec, op, p, tmin, tmax, elements):
       writer.write_batch(batch)
     return outbuf.getvalue()
 
+dtype_mapping = {
+    pa.int8(): pd.Int8Dtype(),
+    pa.int16(): pd.Int16Dtype(),
+    pa.int32(): pd.Int32Dtype(),
+    pa.int64(): pd.Int64Dtype(),
+    pa.uint8(): pd.UInt8Dtype(),
+    pa.uint16(): pd.UInt16Dtype(),
+    pa.uint32(): pd.UInt32Dtype(),
+    pa.uint64(): pd.UInt64Dtype(),
+    pa.bool_(): pd.BooleanDtype(),
+    pa.float32(): pd.Float32Dtype(),
+    pa.float64(): pd.Float64Dtype(),
+    pa.string(): pd.StringDtype(),
+}
+
 def ipc_read(msg):
     with pa.input_stream(memoryview(msg)) as fp:
         fp.seek(0)
@@ -73,7 +88,7 @@ def ipc_read(msg):
             colnames = ELEMENTS_LIST_MPC_ORBITS
         else:
             colnames = ELEMENTS_LIST
-        cols = { col: r[col].to_numpy(zero_copy_only=False) for col in colnames }
+        cols = { col: r[col].to_pandas(types_mapper=dtype_mapping.get) for col in colnames }
         elements = pd.DataFrame(cols)
     else:
         elements = None
